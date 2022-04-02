@@ -73,7 +73,7 @@ class EmbeddingVar : public ResourceBase {
     if (storage_manager_ == nullptr) {
       return errors::InvalidArgument("Invalid ht_type to construct EmbeddingVar");
     } else {
-      if(embedding::StorageType::HBM_DRAM == emb_config_.get_storage_type()){
+      if(embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType()){
         emb_config_.default_value_dim = default_value_dim;
         value_len_ = default_tensor.NumElements() / emb_config_.default_value_dim;
 
@@ -212,7 +212,7 @@ class EmbeddingVar : public ResourceBase {
   }
 
   bool IsHBMDRAM(){
-    return  embedding::StorageType::HBM_DRAM == emb_config_.get_storage_type();
+    return  embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType();
   }
 
   std::string DebugString() const {
@@ -304,7 +304,7 @@ class EmbeddingVar : public ResourceBase {
       Destroy();
       delete storage_manager_;
     }
-    if(embedding::StorageType::HBM_DRAM == emb_config_.get_storage_type()){
+    if(embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType()){
         cudaFree(default_value_);
       }else{
         TypedAllocator::Deallocate(alloc_, default_value_, value_len_);

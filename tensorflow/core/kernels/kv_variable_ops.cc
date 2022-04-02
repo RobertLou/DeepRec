@@ -345,7 +345,6 @@ TF_CALL_double(REGISTER_CPU_KERNELS);
                               .HostMemory("resource_primary")        \
                               .HostMemory("value")                   \
                               .HostMemory("empty_key")               \
-                              .HostMemory("slotnum")                 \
                               .TypeConstraint<ktype>("Tkeys")        \
                               .TypeConstraint<vtype>("dtype"),       \
                           InitializeKvVariableOp<ktype, vtype>);

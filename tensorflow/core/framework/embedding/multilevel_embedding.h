@@ -115,8 +115,8 @@ class StorageManager {
         //new_value_ptr_fn_ = [] (size_t size) { return new NormalGPUValuePtr<V>(size); };
         new_value_ptr_fn_2 = [] (Allocator* allocator, size_t size) { return new NormalGPUValuePtr<V>(allocator, size); };
         LOG(INFO) << "StorageManager::HBM_DRAM: " << name_;
-        kvs_.push_back(new LocklessHashMap<K, V>());
-        kvs_.push_back(new LocklessHashMapCPU<K, V>());
+        kvs_.push_back(std::make_pair(new LocklessHashMap<K, V>(), alloc_));
+        kvs_.push_back(std::make_pair(new LocklessHashMapCPU<K, V>(), alloc_));
         break;
       default:
         VLOG(1) << "StorageManager::default" << name_;
@@ -406,9 +406,6 @@ class StorageManager {
 
   mutex* get_mutex() { return &mu_; }
 
-  StorageType GetStorageType(){
-    return sc_.type;
-  }
 
 
  private:
