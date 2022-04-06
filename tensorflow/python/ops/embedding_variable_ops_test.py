@@ -1472,15 +1472,9 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
     print("testEmbeddingVariableForDRAM")
     def runTestAdagrad(self, var, g):
       search_list=[]
-      for i in range(0, 128):
-        search_list.append(i)
-      for i in range(0, 1024 * 128):
-        search_list.append(i)
-      for i in range(0, 128):
+      for i in range(0, 256):
         search_list.append(i)
       emb = embedding_ops.embedding_lookup(var, math_ops.cast(search_list, dtypes.int64))
-
-
       #fun = math_ops.multiply(emb, 2.0, name='multiply')
       #loss = math_ops.reduce_sum(fun, name='reduce_sum')
       #gs = training_util.get_or_create_global_step()
@@ -1488,7 +1482,7 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
       #g_v = opt.compute_gradients(loss)
       #train_op = opt.apply_gradients(g_v)
       init = variables.global_variables_initializer()
-      print(ops.get_default_graph().as_graph_def())
+      #print(ops.get_default_graph().as_graph_def())
       config = config_pb3.ConfigProto(log_device_placement=True)
       with self.test_session(graph=g,config=config) as sess:
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_VAR_OPS))
@@ -1508,7 +1502,7 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
             partitioner=partitioned_variables.fixed_size_partitioner(num_shards=1),
             steps_to_live=5,
             ev_option = variables.EmbeddingVariableOption(storage_option=variables.StorageOption(storage_type=config_pb2.StorageType.DRAM)))
-      var = variable_scope.get_variable("var_2", shape=[1024*512, 3], initializer=init_ops.ones_initializer(dtypes.float32))
+      var = variable_scope.get_variable("var_2", shape=[1024 * 512, 3], initializer=init_ops.ones_initializer(dtypes.float32))
       time_start = time.time()
       emb1 = runTestAdagrad(self, emb_var, g)
       print(emb1)
@@ -1939,11 +1933,7 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
     print("testEmbeddingVariableForHBMandDRAM")
     def runTestAdagrad(self, var, g):
       search_list=[]
-      for i in range(0, 128):
-        search_list.append(i)
-      for i in range(0, 1024 * 128):
-        search_list.append(i)
-      for i in range(0, 128):
+      for i in range(0, 256 * 1024):
         search_list.append(i)
       emb = embedding_ops.embedding_lookup(var, math_ops.cast(search_list, dtypes.int64))
       #fun = math_ops.multiply(emb, 2.0, name='multiply')
@@ -1973,7 +1963,7 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
           partitioner=partitioned_variables.fixed_size_partitioner(num_shards=1),
           steps_to_live=5,
           ev_option = variables.EmbeddingVariableOption(storage_option=variables.StorageOption(storage_type=config_pb2.StorageType.HBM_DRAM)))
-      var = variable_scope.get_variable("var_2", shape=[1024*512, 3], initializer=init_ops.ones_initializer(dtypes.float32))
+      var = variable_scope.get_variable("var_2", shape=[1024 * 512, 3], initializer=init_ops.ones_initializer(dtypes.float32))
       
       time_start = time.time()
       emb1 = runTestAdagrad(self, emb_var, g)
@@ -1988,9 +1978,9 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
       time_end = time.time()
       time_c = time_end - time_start   #运行所花时间
       print('time cost', time_c, 's')
-      for i in range(0, 1024 * 128 + 128 + 128):
+      for i in range(0, 1024 * 256):
         if emb1[0][i][1] != 1:
-          print(i)
+          print('error here',i)
           break
     
       #for i in range(0, 6):

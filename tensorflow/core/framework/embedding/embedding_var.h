@@ -76,10 +76,7 @@ class EmbeddingVar : public ResourceBase {
       if(embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType()){
         emb_config_.default_value_dim = default_value_dim;
         value_len_ = default_tensor.NumElements() / emb_config_.default_value_dim;
-
-        storage_manager_->alloc_ = alloc_;
-
-        cudaMalloc(&default_value_, default_tensor.NumElements() * sizeof(V));
+        default_value_ = TypedAllocator::Allocate<V>(alloc_, default_tensor.NumElements(), AllocationAttributes());
         auto default_tensor_flat = default_tensor.flat<V>();
         cudaMemcpy(default_value_, &default_tensor_flat(0), default_tensor.TotalBytes(), cudaMemcpyHostToDevice);
       }else{
@@ -304,11 +301,7 @@ class EmbeddingVar : public ResourceBase {
       Destroy();
       delete storage_manager_;
     }
-    if(embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType()){
-        cudaFree(default_value_);
-      }else{
-        TypedAllocator::Deallocate(alloc_, default_value_, value_len_);
-      }
+    TypedAllocator::Deallocate(alloc_, default_value_, value_len_);
   }
   TF_DISALLOW_COPY_AND_ASSIGN(EmbeddingVar);
 };

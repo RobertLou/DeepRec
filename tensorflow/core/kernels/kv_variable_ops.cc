@@ -233,7 +233,13 @@ class InitializeKvVariableOp : public OpKernel {
                                                                storage_path_,
                                                                storage_size_,
                                                                layout_));
-              TF_CHECK_OK(storage_manager->Init());
+              if(storage_type_ == embedding::HBM_DRAM){
+                TF_CHECK_OK(storage_manager->Init(context->device()->GetAllocator({})));
+              }
+              else{
+                TF_CHECK_OK(storage_manager->Init());
+              }                                                 
+              
               *ptr = new EmbeddingVar<TKey, TValue>(handle_self.name(),
                          storage_manager,
                          EmbeddingConfig(emb_index_ + block_num_ * slot_index_, emb_index_,
@@ -260,7 +266,12 @@ class InitializeKvVariableOp : public OpKernel {
                                                                  storage_path_,
                                                                  storage_size_,
                                                                  layout_));
-             TF_CHECK_OK(storage_manager->Init());
+              if(storage_type_ == embedding::HBM_DRAM){
+                TF_CHECK_OK(storage_manager->Init(context->device()->GetAllocator({})));
+              }
+              else{
+                TF_CHECK_OK(storage_manager->Init());
+              }
              *ptr = new EmbeddingVar<TKey, TValue>(handle_primary.name(),
                         storage_manager,
                         EmbeddingConfig(primary_emb_index + block_num_ * primary_slot_index, primary_emb_index,
@@ -462,6 +473,8 @@ class KvResourceGatherOp : public OpKernel {
             slice_bytes, do_work);
       } else {
         if(ev->IsHBMDRAM()){
+          timespec start,end;
+          clock_gettime(CLOCK_MONOTONIC, &start);
           auto do_work = [this, indices_flat,
               out_base, slice_elems, c, ev, lookup_or_create_fn_batch] (int64 start, int64 limit) {
             std::vector<TKey> ids;
@@ -486,8 +499,12 @@ class KvResourceGatherOp : public OpKernel {
           auto worker_threads = c->device()->tensorflow_cpu_worker_threads();
           Shard(worker_threads->num_threads, worker_threads->workers, indices_size,
               slice_bytes, do_work);
+          clock_gettime(CLOCK_MONOTONIC, &end);
+          std::cout << "time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
         }
         else{
+          timespec start,end;
+          clock_gettime(CLOCK_MONOTONIC, &start);
           auto do_work = [this, indices_flat,
               out_base, slice_elems, c, ev, lookup_or_create_fn] (int64 start, int64 limit) {
             std::vector<TKey> ids;
@@ -513,6 +530,8 @@ class KvResourceGatherOp : public OpKernel {
           auto worker_threads = c->device()->tensorflow_cpu_worker_threads();
           Shard(worker_threads->num_threads, worker_threads->workers, indices_size,
               slice_bytes, do_work);
+          clock_gettime(CLOCK_MONOTONIC, &end);
+          std::cout << "time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
           }//ev->isHBMDRAM();
       }
     }

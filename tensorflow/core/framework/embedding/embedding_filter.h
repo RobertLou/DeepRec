@@ -579,7 +579,6 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     TF_CHECK_OK(ev_->LookupOrCreateKey(key, &value_ptr));
     V* mem_val = ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
     cudaMemcpy(val, mem_val, sizeof(V) * ev_->ValueLen(),cudaMemcpyDeviceToDevice);
-    //In fact,now val* is on memory,this code copies data from device to host to check.
     value_ptr->AddFreq();
     //value_ptr->Free(mem_val);
   }
@@ -605,7 +604,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     V** dev_value_address, **dev_init_value_address, **dev_init_default_address;
     int block_dim = 128;
     
-    /*
+    
     if(init_size != 0){
       cudaMalloc(&dev_init_value_address, init_size * sizeof(V *));
       cudaMalloc(&dev_init_default_address, init_size * sizeof(V *));
@@ -620,7 +619,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
       cudaFree(dev_init_value_address);
       cudaFree(dev_init_default_address);
     }//Initialize using kernel function
-    */
+    
     
     /*
     for(int i = 0; i < init_size; i++){
