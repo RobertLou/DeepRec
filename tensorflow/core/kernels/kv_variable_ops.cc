@@ -431,8 +431,8 @@ class KvResourceGatherOp : public OpKernel {
     std::function<void(TKey, TValue*, TValue*)> lookup_or_create_fn;
     std::function<void(TKey*, TValue*, TValue**, int64, int64)> lookup_or_create_fn_batch;
     if(ev->IsHBMDRAM()){
-      lookup_or_create_fn_batch = [ev] (TKey* indexs, TValue* out_base, TValue** default_vs, int64 size, int64 slice_elems){
-                                  ev->LookupOrCreateWithFreqGPUBatch(indexs, out_base, default_vs, size, slice_elems);};
+      //lookup_or_create_fn_batch = [ev] (TKey* indexs, TValue* out_base, TValue** default_vs, int64 size, int64 slice_elems){
+      //                            ev->LookupOrCreateWithFreqGPUBatch(indexs, out_base, default_vs, size, slice_elems);};
     }
     else if (ev->IsMultiLevel()) {
       lookup_or_create_fn = [ev] (TKey index, TValue* out, TValue* default_v){
@@ -475,19 +475,23 @@ class KvResourceGatherOp : public OpKernel {
         if(ev->IsHBMDRAM()){
           timespec start,end;
           clock_gettime(CLOCK_MONOTONIC, &start);
+          int* init_flags = new int[indices_size];
+          TValue** memcpy_address = new TValue*[indices_size];
+          TValue** default_values = new TValue*[indices_size];
           auto do_work = [this, indices_flat,
-              out_base, slice_elems, c, ev, lookup_or_create_fn_batch] (int64 start, int64 limit) {
+              out_base, slice_elems, c, ev, lookup_or_create_fn_batch, 
+              default_values, init_flags, memcpy_address] (int64 start, int64 limit) {
             std::vector<TKey> ids;
-            std::vector<TValue*> default_values;
             for (int64 i = start; i < limit; ++i) {
               TValue* default_v;
               default_v = ev->GetDefaultValuePtr() +
                             ((indices_flat(i)) % ev->GetDefaultValueDim()) * ev->ValueLen();
-              default_values.push_back(default_v);
+              default_values[i] = default_v;
               ids.push_back(indices_flat(i));
             }
-            lookup_or_create_fn_batch(ids.data(),
-                  out_base + start * slice_elems, default_values.data(), limit - start, slice_elems);
+            ev->LookupWithFreqBatch(ids.data(), init_flags, memcpy_address, start, limit);
+            /*lookup_or_create_fn_batch(ids.data(),
+                  out_base + start * slice_elems, &default_values[start], limit - start, slice_elems);*/
             ev->storage_manager()->Schedule([ev, ids]() {
               embedding::BatchCache<TKey>* cache = ev->Cache();
               if (cache) {
@@ -499,6 +503,7 @@ class KvResourceGatherOp : public OpKernel {
           auto worker_threads = c->device()->tensorflow_cpu_worker_threads();
           Shard(worker_threads->num_threads, worker_threads->workers, indices_size,
               slice_bytes, do_work);
+          ev->CreateGPUBatch(out_base, default_values, indices_size, slice_elems, init_flags, memcpy_address);
           clock_gettime(CLOCK_MONOTONIC, &end);
           std::cout << "time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
         }

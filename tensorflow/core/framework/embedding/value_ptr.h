@@ -457,7 +457,6 @@ class NormalGPUValuePtr : public ValuePtr<V> {
       if (bs.test(emb_index))
         return *(V**)((char *)this->ptr_ + sizeof(FixedLengthHeader)) + offset;
       V* tensor_val = *(V**)((char *)this->ptr_ + sizeof(FixedLengthHeader)) + offset;
-      //cudaMemcpy(tensor_val, default_v, value_len * sizeof(V), cudaMemcpyDeviceToDevice);
       need_initialize = 1;
       int8* m = (int8*)((char*)this->ptr_ + 6);
       *m |= (1 <<  emb_index);
