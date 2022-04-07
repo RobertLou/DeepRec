@@ -490,8 +490,6 @@ class KvResourceGatherOp : public OpKernel {
               ids.push_back(indices_flat(i));
             }
             ev->LookupWithFreqBatch(ids.data(), init_flags, memcpy_address, start, limit);
-            /*lookup_or_create_fn_batch(ids.data(),
-                  out_base + start * slice_elems, &default_values[start], limit - start, slice_elems);*/
             ev->storage_manager()->Schedule([ev, ids]() {
               embedding::BatchCache<TKey>* cache = ev->Cache();
               if (cache) {

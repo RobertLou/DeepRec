@@ -141,11 +141,6 @@ class EmbeddingVar : public ResourceBase {
     filter_->LookupOrCreateWithFreq(key, val, default_value_ptr);
   }
 
-  void LookupOrCreateWithFreqGPU(K key, V* val, V* default_v)  {
-    const V* default_value_ptr = (default_v == nullptr) ? default_value_ : default_v;
-    filter_->LookupOrCreateWithFreqGPU(key, val, default_value_ptr);
-  }
-
   void LookupWithFreqBatch(K* keys, int *init_flags, V** memcpy_address, int start, int limit){
     ValuePtr<V>* value_ptr = nullptr;
     for(int i = 0; i < limit - start; i++){
@@ -161,13 +156,6 @@ class EmbeddingVar : public ResourceBase {
       default_values[i] = (default_values[i] == nullptr) ? default_value_ : default_values[i];
     }
     filter_->CreateGPUBatch(val_base, default_values, size, slice_elems, value_len_, init_flags, memcpy_address);
-  }
-
-  void LookupOrCreateWithFreqGPUBatch(K* keys, V* val_base, V** default_values, int64 size, int64 slice_elems)  {
-    for(int i = 0;i < size;i++){
-      default_values[i] = (default_values[i] == nullptr) ? default_value_ : default_values[i];
-    }
-    filter_->LookupOrCreateWithFreqGPUBatch(keys, val_base, default_values, size, slice_elems, value_len_);
   }
 
   void LookupOrCreate(K key, V* val, V* default_v, int64 count)  {
