@@ -473,8 +473,9 @@ class KvResourceGatherOp : public OpKernel {
             slice_bytes, do_work);
       } else {
         if(ev->IsHBMDRAM()){
-          timespec start,end;
+          timespec start, end, part_start, part_end;
           clock_gettime(CLOCK_MONOTONIC, &start);
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
           int* init_flags = new int[indices_size];
           TValue** memcpy_address = new TValue*[indices_size];
           TValue** default_values = new TValue*[indices_size];
@@ -501,9 +502,15 @@ class KvResourceGatherOp : public OpKernel {
           auto worker_threads = c->device()->tensorflow_cpu_worker_threads();
           Shard(worker_threads->num_threads, worker_threads->workers, indices_size,
               slice_bytes, do_work);
-          ev->CreateGPUBatch(out_base, default_values, indices_size, slice_elems, init_flags, memcpy_address);
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          std::cout << "Lookup time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms" << std::endl;  
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
+          //ev->CreateGPUBatch(out_base, default_values, indices_size, slice_elems, init_flags, memcpy_address);
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          std::cout << "Memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms" << std::endl;
+
           clock_gettime(CLOCK_MONOTONIC, &end);
-          std::cout << "time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
+          std::cout << "Total time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
         }
         else{
           timespec start,end;
@@ -515,8 +522,6 @@ class KvResourceGatherOp : public OpKernel {
               TValue* default_v;
               default_v = ev->GetDefaultValuePtr() +
                             ((indices_flat(i)) % ev->GetDefaultValueDim()) * ev->ValueLen();
-              /*ev->LookupOrCreate(indices_flat(i),
-                  out_base + i * slice_elems, default_v);*/
               lookup_or_create_fn(indices_flat(i),
                   out_base + i * slice_elems, default_v);
               ids.push_back(indices_flat(i));

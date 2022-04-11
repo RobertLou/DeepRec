@@ -112,7 +112,7 @@ class BloomFilter : public EmbeddingFilter<K, V, EV> {
     }
     AddFreq(key);
   }
-  
+
   void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len_, int* init_flags, V** memcpy_address){
 
   }
@@ -523,9 +523,9 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
   void LookupOrCreate(K key, V* val, const V* default_value_ptr) override {
     ValuePtr<V>* value_ptr = nullptr;
     TF_CHECK_OK(ev_->LookupOrCreateKey(key, &value_ptr));
-    V* mem_val = ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
-    memcpy(val, mem_val, sizeof(V) * ev_->ValueLen());
-    value_ptr->Free(mem_val);
+    //V* mem_val = ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
+    //memcpy(val, mem_val, sizeof(V) * ev_->ValueLen());
+    //value_ptr->Free(mem_val);
   }
 
   void LookupOrCreateWithFreq(K key, V* val, const V* default_value_ptr) override {
@@ -540,13 +540,18 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
   void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len, int* init_flags, V** memcpy_address){
     std::vector<V*> init_mem_vals;
     std::vector<V*> init_default_values;
+    timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
     for(int i = 0; i < size; i++){
       if(init_flags[i]){
         init_mem_vals.push_back(memcpy_address[i]);
         init_default_values.push_back(default_values[i]);
       }
     }
-
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    std::cout << "Vector time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
+    
+    clock_gettime(CLOCK_MONOTONIC, &start);
     int init_size = init_mem_vals.size();
     V** dev_value_address, **dev_init_value_address, **dev_init_default_address;
     int block_dim = 128;
@@ -575,6 +580,8 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     cudaDeviceSynchronize();
 
     cudaFree(dev_value_address);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    std::cout << "Cuda time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
   }
 
   void LookupOrCreate(K key, V* val, const V* default_value_ptr, int64 count) override {
