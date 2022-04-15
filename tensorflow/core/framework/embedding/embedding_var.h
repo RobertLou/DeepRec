@@ -141,7 +141,7 @@ class EmbeddingVar : public ResourceBase {
     filter_->LookupOrCreateWithFreq(key, val, default_value_ptr);
   }
 
-  void LookupWithFreqBatch(K* keys, int *init_flags, V** memcpy_address, int start, int limit){
+  void LookupWithFreqBatch(K* keys, bool *init_flags, V** memcpy_address, int start, int limit){
     ValuePtr<V>* value_ptr = nullptr;
     for(int i = 0; i < limit - start; i++){
       TF_CHECK_OK(LookupOrCreateKey(keys[i], &value_ptr));
@@ -151,7 +151,7 @@ class EmbeddingVar : public ResourceBase {
     }
   }
   
-  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int* init_flags, V** memcpy_address){
+  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, bool* init_flags, V** memcpy_address){
     for(int i = 0;i < size;i++){
       default_values[i] = (default_values[i] == nullptr) ? default_value_ : default_values[i];
     }
@@ -168,7 +168,7 @@ class EmbeddingVar : public ResourceBase {
         emb_config_.emb_index, storage_manager_->GetOffset(emb_config_.emb_index));
   }
 
-  V* LookupOrCreateEmb(ValuePtr<V>* value_ptr, int &need_initialize) {
+  V* LookupOrCreateEmb(ValuePtr<V>* value_ptr, bool &need_initialize) {
     return value_ptr->GetOrAllocate(alloc_, value_len_, nullptr,
         emb_config_.emb_index, storage_manager_->GetOffset(emb_config_.emb_index), need_initialize);
   }

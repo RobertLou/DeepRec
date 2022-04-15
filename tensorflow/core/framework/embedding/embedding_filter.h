@@ -33,7 +33,7 @@ class EmbeddingFilter {
  public:
   virtual void LookupOrCreate(K key, V* val, const V* default_value_ptr) = 0;
   virtual void LookupOrCreateWithFreq(K key, V* val, const V* default_value_ptr) = 0;
-  virtual void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len_, int* init_flags, V** memcpy_address) = 0;
+  virtual void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len_, bool* init_flags, V** memcpy_address) = 0;
   virtual void LookupOrCreate(K key, V* val, const V* default_value_ptr, int64 count) = 0;
   virtual Status LookupOrCreateKey(K key, ValuePtr<V>** val, bool* is_filter,
       int update_version = -1) = 0;
@@ -113,7 +113,7 @@ class BloomFilter : public EmbeddingFilter<K, V, EV> {
     AddFreq(key);
   }
 
-  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len_, int* init_flags, V** memcpy_address){
+  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len_, bool* init_flags, V** memcpy_address){
 
   }
 
@@ -428,7 +428,7 @@ class CounterFilter : public EmbeddingFilter<K, V, EV> {
     value_ptr->AddFreq();
   }
 
-  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len_, int* init_flags, V** memcpy_address){
+  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len_, bool* init_flags, V** memcpy_address){
 
   }
 
@@ -537,7 +537,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     value_ptr->Free(mem_val);
   }
 
-  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len, int* init_flags, V** memcpy_address){
+  void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len, bool* init_flags, V** memcpy_address){
     std::vector<V*> init_mem_vals;
     std::vector<V*> init_default_values;
     for(int i = 0; i < size; i++){

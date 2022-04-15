@@ -223,7 +223,7 @@ class ValuePtr {
     }
   }
 
-  virtual V* GetOrAllocate(Allocator* allocator, int64 value_len, const V* default_v, int emb_index, int offset, int &need_initialize) {
+  virtual V* GetOrAllocate(Allocator* allocator, int64 value_len, const V* default_v, int emb_index, int offset, bool &need_initialize) {
 
   }
 
@@ -449,7 +449,7 @@ class NormalGPUValuePtr : public ValuePtr<V> {
     }
   }
 
-  virtual V* GetOrAllocate(Allocator* allocator, int64 value_len, const V* default_v, int emb_index, int offset, int &need_initialize) override {
+  virtual V* GetOrAllocate(Allocator* allocator, int64 value_len, const V* default_v, int emb_index, int offset, bool &need_initialize) override {
     int8 meta = *((int8*)((char*)this->ptr_ + 6));
     std::bitset<8> bs(meta);
     if (!bs.test(emb_index)) {
