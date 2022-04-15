@@ -25,6 +25,9 @@ limitations under the License.
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
 
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
 namespace tensorflow {
 
 // If true, ev allocator collects more stats.
@@ -179,7 +182,8 @@ class Chunk {
   Chunk(size_t chunk_size, size_t slot_size, Bin* bin, PageMap* pm) :
       chunk_size_(chunk_size), slot_size_(slot_size) {
     slot_count_ = chunk_size_ / slot_size_;
-    start_ = (char*)port::AlignedMalloc(chunk_size_, kPageSize);
+    //start_ = (char*)port::AlignedMalloc(chunk_size_, kPageSize);
+    cudaMalloc(&start_, chunk_size_);
     if (start_ == nullptr) {
       LOG(FATAL) << "OOM, can't create new Chunk for EVAllocator,"
                  << "please check free memory.";
@@ -190,7 +194,8 @@ class Chunk {
   }
 
   ~Chunk() {
-    delete start_;
+    cudaFree(start_);
+    //delete start_;
   }
 
   void* Allocate() {

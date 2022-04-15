@@ -234,7 +234,7 @@ class InitializeKvVariableOp : public OpKernel {
                                                                storage_size_,
                                                                layout_));
               if(storage_type_ == embedding::HBM_DRAM){
-                TF_CHECK_OK(storage_manager->Init(context->device()->GetAllocator({})));
+                TF_CHECK_OK(storage_manager->Init(ev_allocator()));
               }
               else{
                 TF_CHECK_OK(storage_manager->Init());
@@ -248,7 +248,7 @@ class InitializeKvVariableOp : public OpKernel {
                                          l2_weight_threshold_, layout_,
                                          max_element_size_, false_positive_probability_,
                                          counter_type_, default_value_dim_),
-                                         context->device()->GetAllocator({}));
+                                         ev_allocator());
             return Status::OK();
             }));
       ev->Init(default_values, default_value_dim_);
@@ -267,7 +267,7 @@ class InitializeKvVariableOp : public OpKernel {
                                                                  storage_size_,
                                                                  layout_));
               if(storage_type_ == embedding::HBM_DRAM){
-                TF_CHECK_OK(storage_manager->Init(context->device()->GetAllocator({})));
+                TF_CHECK_OK(storage_manager->Init(ev_allocator()));
               }
               else{
                 TF_CHECK_OK(storage_manager->Init());
@@ -280,7 +280,7 @@ class InitializeKvVariableOp : public OpKernel {
                                         l2_weight_threshold_, layout_,
                                         max_element_size_, false_positive_probability_,
                                         counter_type_),
-                                        context->device()->GetAllocator({}));
+                                        ev_allocator());
             // default_values is slot value, should not to initialize primary value
             return Status::OK();
            }));
@@ -299,7 +299,7 @@ class InitializeKvVariableOp : public OpKernel {
                                          max_freq_, l2_weight_threshold_,
                                          layout_, max_element_size_, false_positive_probability_,
                                          counter_type_, default_value_dim_),
-                                         context->device()->GetAllocator({}));
+                                         ev_allocator());
              return (*ptr)->Init(default_values, default_value_dim_);
             }));
       core::ScopedUnref unref_me(primary_variable);
@@ -500,12 +500,12 @@ class KvResourceGatherOp : public OpKernel {
           };
 
           auto worker_threads = c->device()->tensorflow_cpu_worker_threads();
-          Shard(worker_threads->num_threads, worker_threads->workers, indices_size,
+          Shard(8, worker_threads->workers, indices_size,
               slice_bytes, do_work);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           std::cout << "Lookup time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms" << std::endl;  
           clock_gettime(CLOCK_MONOTONIC, &part_start);
-          //ev->CreateGPUBatch(out_base, default_values, indices_size, slice_elems, init_flags, memcpy_address);
+          ev->CreateGPUBatch(out_base, default_values, indices_size, slice_elems, init_flags, memcpy_address);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           std::cout << "Memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms" << std::endl;
 
@@ -536,7 +536,7 @@ class KvResourceGatherOp : public OpKernel {
           };
 
           auto worker_threads = c->device()->tensorflow_cpu_worker_threads();
-          Shard(worker_threads->num_threads, worker_threads->workers, indices_size,
+          Shard(8, worker_threads->workers, indices_size,
               slice_bytes, do_work);
           clock_gettime(CLOCK_MONOTONIC, &end);
           std::cout << "time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;

@@ -523,9 +523,9 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
   void LookupOrCreate(K key, V* val, const V* default_value_ptr) override {
     ValuePtr<V>* value_ptr = nullptr;
     TF_CHECK_OK(ev_->LookupOrCreateKey(key, &value_ptr));
-    //V* mem_val = ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
-    //memcpy(val, mem_val, sizeof(V) * ev_->ValueLen());
-    //value_ptr->Free(mem_val);
+    V* mem_val = ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
+    memcpy(val, mem_val, sizeof(V) * ev_->ValueLen());
+    value_ptr->Free(mem_val);
   }
 
   void LookupOrCreateWithFreq(K key, V* val, const V* default_value_ptr) override {
@@ -540,22 +540,15 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
   void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len, int* init_flags, V** memcpy_address){
     std::vector<V*> init_mem_vals;
     std::vector<V*> init_default_values;
-    timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
     for(int i = 0; i < size; i++){
       if(init_flags[i]){
         init_mem_vals.push_back(memcpy_address[i]);
         init_default_values.push_back(default_values[i]);
       }
     }
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    std::cout << "Vector time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
-    
-    clock_gettime(CLOCK_MONOTONIC, &start);
     int init_size = init_mem_vals.size();
     V** dev_value_address, **dev_init_value_address, **dev_init_default_address;
     int block_dim = 128;
-    
     
     if(init_size != 0){
       cudaMalloc(&dev_init_value_address, init_size * sizeof(V *));
@@ -565,7 +558,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
       cudaMemcpy(dev_init_default_address, init_default_values.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
 
       void* args[] = { (void*)&dev_init_value_address, (void*)&dev_init_default_address, (void*)&value_len, (void*)&init_size};
-      cudaLaunchKernel((void *)BatchInit<V>, (init_size + block_dim - 1) / block_dim, block_dim, args, 0, NULL);
+      cudaLaunchKernel((void *)BatchInit<V>, (init_size + block_dim - 1) * value_len / block_dim, block_dim, args, 0, NULL);
       cudaDeviceSynchronize();
 
       cudaFree(dev_init_value_address);
@@ -576,12 +569,10 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     cudaMemcpy(dev_value_address, memcpy_address, sizeof(V *) * size, cudaMemcpyHostToDevice);
 
     void* args1[] = { (void*)&dev_value_address, (void*)&val_base, (void*)&slice_elems, (void*)&size};
-    cudaLaunchKernel((void *)BatchCopy<V>, (size + block_dim - 1) / block_dim, block_dim, args1, 0, NULL);
+    cudaLaunchKernel((void *)BatchCopy<V>, (size + block_dim - 1) * value_len / block_dim, block_dim, args1, 0, NULL);
     cudaDeviceSynchronize();
 
     cudaFree(dev_value_address);
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    std::cout << "Cuda time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
   }
 
   void LookupOrCreate(K key, V* val, const V* default_value_ptr, int64 count) override {

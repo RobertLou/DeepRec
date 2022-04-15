@@ -1204,8 +1204,8 @@ TEST(EmbeddingVariableTest, TestBatchCommitofLocklessHashMapCPU) {
 }
 */
 
-const int total_size = 1024 * 2; 
-const int th_num = 8;
+const int total_size = 1024 * 8; 
+const int th_num = 1;
 const int malloc_size = total_size / th_num;
 
 void malloc_use_allocator(Allocator* allocator){
@@ -1296,6 +1296,49 @@ TEST(EmbeddingVariableTest, TestCPUGPUMalloc) {
   clock_gettime(CLOCK_MONOTONIC, &end);
   LOG(INFO) << "cost time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
 }
+
+void malloc_free_use_allocator(Allocator* allocator){
+  timespec start;
+  timespec end;
+  std::vector<float*> ptrs;
+  float* first = (float *)allocator->AllocateRaw(0, sizeof(float));
+
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  for (int i = 0; i < malloc_size; ++i) {
+    int ev_list_size = 32;
+    float* ptr_ = (float *)allocator->AllocateRaw(0, sizeof(float) * ev_list_size);
+    ptrs.push_back(ptr_);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  LOG(INFO) << "first time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  for (auto iter = ptrs.begin();iter != ptrs.end();iter++) {
+    allocator->DeallocateRaw(*iter);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  LOG(INFO) << "free time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  for (int i = 0; i < malloc_size; ++i) {
+    int ev_list_size = 32;
+    float* ptr_ = (float *)allocator->AllocateRaw(0, sizeof(float) * ev_list_size);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  LOG(INFO) << "second time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+}
+
+TEST(EmbeddingVariableTest, TestEVMallocFree) {
+  std::thread th_arr[th_num];
+  for (unsigned int i = 0; i < th_num; ++i) {
+    th_arr[i] = std::thread(malloc_free_use_allocator, ev_allocator());
+  }
+  for (unsigned int i = 0; i < th_num; ++i) {
+    th_arr[i].join();
+  }
+}
+
+
 
 } // namespace
 } // namespace embedding
