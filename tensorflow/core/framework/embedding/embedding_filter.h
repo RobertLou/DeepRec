@@ -550,9 +550,21 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     V** dev_value_address, **dev_init_value_address, **dev_init_default_address;
     int block_dim = 128;
     
+    Allocator* allocator = ev_->GetAllocator();
+
+    if(ev_->dev_init_value_address == nullptr){
+      ev_->dev_init_value_address = (V**)allocator->AllocateRaw(0, size * sizeof(V *));
+    }
+    if(ev_->dev_init_default_address == nullptr){
+      ev_->dev_init_default_address = (V**)allocator->AllocateRaw(0, size * sizeof(V *));
+    }
+    if(ev_->dev_value_address == nullptr){
+      ev_->dev_value_address = (V**)allocator->AllocateRaw(0, size * sizeof(V *));
+    }//allocate address buffer
+
     if(init_size != 0){
-      cudaMalloc(&dev_init_value_address, init_size * sizeof(V *));
-      cudaMalloc(&dev_init_default_address, init_size * sizeof(V *));
+      dev_init_value_address = ev_->dev_init_value_address;
+      dev_init_default_address = ev_->dev_init_default_address;
 
       cudaMemcpy(dev_init_value_address, init_mem_vals.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
       cudaMemcpy(dev_init_default_address, init_default_values.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
@@ -560,19 +572,14 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
       void* args[] = { (void*)&dev_init_value_address, (void*)&dev_init_default_address, (void*)&value_len, (void*)&init_size};
       cudaLaunchKernel((void *)BatchInit<V>, (init_size + block_dim - 1) * value_len / block_dim, block_dim, args, 0, NULL);
       cudaDeviceSynchronize();
-
-      cudaFree(dev_init_value_address);
-      cudaFree(dev_init_default_address);
     }//Initialize using kernel function
-
-    cudaMalloc(&dev_value_address, size * sizeof(V *));
+    
+    dev_value_address = ev_->dev_value_address;
     cudaMemcpy(dev_value_address, memcpy_address, sizeof(V *) * size, cudaMemcpyHostToDevice);
 
     void* args1[] = { (void*)&dev_value_address, (void*)&val_base, (void*)&slice_elems, (void*)&size};
     cudaLaunchKernel((void *)BatchCopy<V>, (size + block_dim - 1) * value_len / block_dim, block_dim, args1, 0, NULL);
     cudaDeviceSynchronize();
-
-    cudaFree(dev_value_address);
   }
 
   void LookupOrCreate(K key, V* val, const V* default_value_ptr, int64 count) override {

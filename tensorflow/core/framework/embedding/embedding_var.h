@@ -78,6 +78,9 @@ class EmbeddingVar : public ResourceBase {
         value_len_ = default_tensor.NumElements() / emb_config_.default_value_dim;
         default_value_ = TypedAllocator::Allocate<V>(alloc_, default_tensor.NumElements(), AllocationAttributes());
         auto default_tensor_flat = default_tensor.flat<V>();
+        dev_init_default_address = nullptr;
+        dev_init_value_address = nullptr;
+        dev_value_address = nullptr;
         cudaMemcpy(default_value_, &default_tensor_flat(0), default_tensor.TotalBytes(), cudaMemcpyHostToDevice);
       }else{
         alloc_ = ev_allocator();
@@ -287,6 +290,13 @@ class EmbeddingVar : public ResourceBase {
     return storage_manager_->Cache();
   }
 
+  Allocator* GetAllocator() {
+    return alloc_;
+  }
+ 
+ public:
+  V **dev_value_address, **dev_init_value_address, **dev_init_default_address;
+
  private:
   std::string name_;
   bool is_initialized_ = false;
@@ -305,6 +315,11 @@ class EmbeddingVar : public ResourceBase {
     if (emb_config_.is_primary() && emb_config_.primary_emb_index == 0) {
       Destroy();
       delete storage_manager_;
+    }
+    if(dev_init_default_address != nullptr && alloc_ != nullptr){
+      alloc_->DeallocateRaw(dev_init_value_address);
+      alloc_->DeallocateRaw(dev_init_default_address);
+      alloc_->DeallocateRaw(dev_value_address);
     }
     TypedAllocator::Deallocate(alloc_, default_value_, value_len_);
   }
