@@ -112,33 +112,62 @@ class KvSparseApplyAdagradOp : public OpKernel {
 
     if (N > 0) {
       if (inner_dim > 0) {
-        auto indices_vec = indices.vec<TKey>();
-        auto grad_flat = grad.flat_outer_dims<T>();
-        T lr_scalar = lr.scalar<T>()();
-        Tstep gs = global_step.scalar<Tstep>()();
+        if(var->IsHBMDRAM()) {
+          auto indices_flat = indices.flat<TKey>();
+          auto grad_flat = grad.flat_outer_dims<T>();
+          T lr_scalar = lr.scalar<T>()();
+          Tstep gs = global_step.scalar<Tstep>()();
+          LOG(INFO) << "HBM here";
+          const TKey* key_base = &indices_flat(0);
+          const T* grad_base = &grad_flat(0);
+          LOG(INFO) << lr_scalar;
+          LOG(INFO) << gs;
+          TKey *key_host;
+          key_host = (TKey *)malloc(sizeof(TKey) * 128);
+          cudaMemcpy(key_host, key_base, sizeof(TKey) * 128, cudaMemcpyDeviceToHost);
+          for(int i = 0; i < 128; i++){
+            LOG(INFO) << key_host[i];
+          } 
+          free(key_host);
+          
+          T *grad_host;
+          grad_host = (T *)malloc(sizeof(T) * 128);
+          cudaMemcpy(grad_host, grad_base, sizeof(T) * 128, cudaMemcpyDeviceToHost);
+          for(int i = 0; i < 128; i++){
+            LOG(INFO) << grad_host[i];
+          } 
+          free(grad_host);
 
-        auto do_work = [this, ctx, &indices_vec, var, accum, &grad_flat,
-            &gs, &lr_scalar] (int64 start_i, int64 limit_i) {
-          for (int64 i = start_i; i < limit_i; i++) {
-            const TKey index = indices_vec(i);
-            ValuePtr<T>* value_ptr = nullptr;
-            bool is_filter = false;
-            OP_REQUIRES_OK(ctx, var->LookupOrCreateKey(index, &value_ptr, &is_filter,
-                  gs));
-            if (is_filter) {
-              auto a = accum->flat(value_ptr);
-              auto g = grad_flat.template chip<0>(i);
-              auto v = var->flat(value_ptr);
 
-              a += g.square();
-              v -= g.constant(lr_scalar) * g * a.rsqrt();
-              var->Commit(index, value_ptr);
+          //LOG(INFO) << grad_base;
+        }
+        else {
+          auto indices_vec = indices.vec<TKey>();
+          auto grad_flat = grad.flat_outer_dims<T>();
+          T lr_scalar = lr.scalar<T>()();
+          Tstep gs = global_step.scalar<Tstep>()();
+          auto do_work = [this, ctx, &indices_vec, var, accum, &grad_flat,
+              &gs, &lr_scalar] (int64 start_i, int64 limit_i) {
+            for (int64 i = start_i; i < limit_i; i++) {
+              const TKey index = indices_vec(i);
+              ValuePtr<T>* value_ptr = nullptr;
+              bool is_filter = false;
+              OP_REQUIRES_OK(ctx, var->LookupOrCreateKey(index, &value_ptr, &is_filter,
+                    gs));
+              if (is_filter) {
+                auto a = accum->flat(value_ptr);
+                auto g = grad_flat.template chip<0>(i);
+                auto v = var->flat(value_ptr);
+                a += g.square();
+                v -= g.constant(lr_scalar) * g * a.rsqrt();
+                var->Commit(index, value_ptr);
+              }
             }
-          }
-        };
-        const int64 cost = 1000; //very unreliable estimate for cost per step.
-        auto worker_threads = *(ctx->device()->tensorflow_cpu_worker_threads());
-        Shard(worker_threads.num_threads, worker_threads.workers, N, cost, do_work);
+          };
+          const int64 cost = 1000; //very unreliable estimate for cost per step.
+          auto worker_threads = *(ctx->device()->tensorflow_cpu_worker_threads());
+          Shard(worker_threads.num_threads, worker_threads.workers, N, cost, do_work);
+        }//IsHBM_DRAM
       }
     }
   }
@@ -163,6 +192,26 @@ class KvSparseApplyAdagradOp : public OpKernel {
 TF_CALL_float(REGISTER_CPU_KERNELS);
 
 #undef REGISTER_CPU_KERNELS
+#undef REGISTER_KERNELS
+
+#define REGISTER_KERNELS(Tindices, T, Tstep)                         \
+  REGISTER_KERNEL_BUILDER(Name("KvResourceSparseApplyAdagrad")       \
+                              .Device(DEVICE_GPU)                    \
+                              .TypeConstraint<T>("T")                \
+                              .HostMemory("lr")                      \
+                              .HostMemory("global_step")             \
+                              .TypeConstraint<Tindices>("Tindices")  \
+                              .TypeConstraint<Tstep>("Tstep"),       \
+                          KvSparseApplyAdagradOp<Tindices, T, Tstep>);
+#define REGISTER_GPU_KERNELS(T)        \
+  REGISTER_KERNELS(int32, T, int32);   \
+  REGISTER_KERNELS(int64, T, int32);   \
+  REGISTER_KERNELS(int32, T, int64);   \
+  REGISTER_KERNELS(int64, T, int64);
+
+TF_CALL_float(REGISTER_GPU_KERNELS);
+
+#undef REGISTER_GPU_KERNELS
 #undef REGISTER_KERNELS
 
 // Note, this op works on cpu only.

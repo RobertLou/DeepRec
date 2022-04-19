@@ -316,10 +316,19 @@ class EmbeddingVar : public ResourceBase {
       Destroy();
       delete storage_manager_;
     }
-    if(dev_init_default_address != nullptr && alloc_ != nullptr){
-      alloc_->DeallocateRaw(dev_init_value_address);
-      alloc_->DeallocateRaw(dev_init_default_address);
-      alloc_->DeallocateRaw(dev_value_address);
+    if(embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType()){
+      if(dev_init_value_address != nullptr){
+        alloc_->DeallocateRaw(dev_init_value_address);
+        dev_init_value_address = nullptr;
+      }
+      if(dev_init_default_address != nullptr){
+        alloc_->DeallocateRaw(dev_init_default_address);
+        dev_init_default_address = nullptr;
+      }
+      if(dev_value_address != nullptr){
+        alloc_->DeallocateRaw(dev_value_address);
+        dev_value_address = nullptr;
+      }
     }
     TypedAllocator::Deallocate(alloc_, default_value_, value_len_);
   }

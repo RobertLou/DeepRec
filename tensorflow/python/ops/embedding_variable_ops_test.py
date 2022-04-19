@@ -1472,15 +1472,15 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
     print("testEmbeddingVariableForDRAM")
     def runTestAdagrad(self, var, g):
       search_list=[]
-      for i in range(0, 1024 * 128):
+      for i in range(0, 8):
         search_list.append(i)
       emb = embedding_ops.embedding_lookup(var, math_ops.cast(search_list, dtypes.int64))
-      #fun = math_ops.multiply(emb, 2.0, name='multiply')
-      #loss = math_ops.reduce_sum(fun, name='reduce_sum')
-      #gs = training_util.get_or_create_global_step()
-      #opt = adagrad.AdagradOptimizer(0.1)
-      #g_v = opt.compute_gradients(loss)
-      #train_op = opt.apply_gradients(g_v)
+      fun = math_ops.multiply(emb, 2.0, name='multiply')
+      loss = math_ops.reduce_sum(fun, name='reduce_sum')
+      gs = training_util.get_or_create_global_step()
+      opt = adagrad.AdagradOptimizer(0.1)
+      g_v = opt.compute_gradients(loss)
+      train_op = opt.apply_gradients(g_v)
       init = variables.global_variables_initializer()
       #print(ops.get_default_graph().as_graph_def())
       #config = config_pb3.ConfigProto(log_device_placement=True)
@@ -1489,16 +1489,15 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
         sess.run([init])
         r = sess.run([emb])
-        r = sess.run([emb])
-        #r, _, _ = sess.run([emb, train_op,loss])
-        #r, _, _ = sess.run([emb, train_op,loss])
+        r, _, _ = sess.run([emb, train_op,loss])
+        r, _, _ = sess.run([emb, train_op,loss])
         #r, _, _ = sess.run([emb, train_op,loss])
         #r, _, _ = sess.run([emb, train_op,loss])
         return r
 
     with ops.Graph().as_default() as g, ops.device('/cpu:0'):
       emb_var = variable_scope.get_embedding_variable("var_1",
-            embedding_dim = 128,
+            embedding_dim = 4,
             initializer=init_ops.ones_initializer(dtypes.float32),
             partitioner=partitioned_variables.fixed_size_partitioner(num_shards=1),
             steps_to_live=5,
@@ -1934,15 +1933,15 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
     print("testEmbeddingVariableForHBMandDRAM")
     def runTestAdagrad(self, var, g):
       search_list=[]
-      for i in range(0, 1024 * 32):
+      for i in range(0, 1024 * 128):
         search_list.append(i)
       emb = embedding_ops.embedding_lookup(var, math_ops.cast(search_list, dtypes.int64))
-      #fun = math_ops.multiply(emb, 2.0, name='multiply')
-      #loss = math_ops.reduce_sum(fun, name='reduce_sum')
-      #gs = training_util.get_or_create_global_step()
-      #opt = adagrad.AdagradOptimizer(0.1)
-      #g_v = opt.compute_gradients(loss)
-      #train_op = opt.apply_gradients(g_v)
+      fun = math_ops.multiply(emb, 2.0, name='multiply')
+      loss = math_ops.reduce_sum(fun, name='reduce_sum')
+      gs = training_util.get_or_create_global_step()
+      opt = adagrad.AdagradOptimizer(0.1)
+      g_v = opt.compute_gradients(loss)
+      train_op = opt.apply_gradients(g_v)
       init = variables.global_variables_initializer()
       #config = config_pb3.ConfigProto(log_device_placement=True)
       with self.test_session(graph=g) as sess:
@@ -1950,14 +1949,14 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
         sess.run([init])
         r = sess.run([emb])
-        r = sess.run([emb])
-        r = sess.run([emb])
-        r = sess.run([emb])
+        #r = sess.run([emb])
+        #r = sess.run([emb])
+        #r = sess.run([emb])
         #r, _, _ = sess.run([emb, train_op,loss])
         #r, _, _ = sess.run([emb, train_op,loss])
         #r, _, _ = sess.run([emb, train_op,loss])
-        #r, _, _ = sess.run([emb, train_op,loss])
-        #r, _, _ = sess.run([emb, train_op,loss])
+        r, _, _ = sess.run([emb, train_op,loss])
+        r, _, _ = sess.run([emb, train_op,loss])
         return r
 
     with ops.Graph().as_default() as g, ops.device('/gpu:0'):
