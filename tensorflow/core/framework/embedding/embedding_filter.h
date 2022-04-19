@@ -549,22 +549,10 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     int init_size = init_mem_vals.size();
     V** dev_value_address, **dev_init_value_address, **dev_init_default_address;
     int block_dim = 128;
-    
-    Allocator* allocator = ev_->GetAllocator();
-
-    if(ev_->dev_init_value_address == nullptr){
-      ev_->dev_init_value_address = (V**)allocator->AllocateRaw(0, size * sizeof(V *));
-    }
-    if(ev_->dev_init_default_address == nullptr){
-      ev_->dev_init_default_address = (V**)allocator->AllocateRaw(0, size * sizeof(V *));
-    }
-    if(ev_->dev_value_address == nullptr){
-      ev_->dev_value_address = (V**)allocator->AllocateRaw(0, size * sizeof(V *));
-    }//allocate address buffer
 
     if(init_size != 0){
-      dev_init_value_address = ev_->dev_init_value_address;
-      dev_init_default_address = ev_->dev_init_default_address;
+      dev_init_value_address = ev_->GetDevInitValueAddress(size);
+      dev_init_default_address = ev_->GetDevInitDefaultAddress(size);
 
       cudaMemcpy(dev_init_value_address, init_mem_vals.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
       cudaMemcpy(dev_init_default_address, init_default_values.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
@@ -574,7 +562,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
       cudaDeviceSynchronize();
     }//Initialize using kernel function
     
-    dev_value_address = ev_->dev_value_address;
+    dev_value_address = ev_->GetDevValueAddress(size);
     cudaMemcpy(dev_value_address, memcpy_address, sizeof(V *) * size, cudaMemcpyHostToDevice);
 
     void* args1[] = { (void*)&dev_value_address, (void*)&val_base, (void*)&slice_elems, (void*)&size};

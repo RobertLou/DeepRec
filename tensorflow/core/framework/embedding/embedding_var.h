@@ -81,6 +81,9 @@ class EmbeddingVar : public ResourceBase {
         dev_init_default_address = nullptr;
         dev_init_value_address = nullptr;
         dev_value_address = nullptr;
+        value_size = 0; 
+        init_value_size = 0; 
+        init_default_size = 0;
         cudaMemcpy(default_value_, &default_tensor_flat(0), default_tensor.TotalBytes(), cudaMemcpyHostToDevice);
       }else{
         alloc_ = ev_allocator();
@@ -293,9 +296,48 @@ class EmbeddingVar : public ResourceBase {
   Allocator* GetAllocator() {
     return alloc_;
   }
- 
- public:
-  V **dev_value_address, **dev_init_value_address, **dev_init_default_address;
+  
+  V** GetDevValueAddress(int64 size) {   
+    if(value_size >= size){
+      return dev_value_address;
+    }
+    else{
+      if(value_size != 0){
+        alloc_->DeallocateRaw(dev_value_address);
+      }
+      dev_value_address = (V**)alloc_->AllocateRaw(0, size * sizeof(V*));
+      value_size = size;
+      return dev_value_address;
+    }
+  }
+
+  V** GetDevInitValueAddress(int64 size) {   
+    if(init_value_size >= size){
+      return dev_init_value_address;
+    }
+    else{
+      if(init_value_size != 0){
+        alloc_->DeallocateRaw(dev_init_value_address);
+      }
+      dev_init_value_address =(V**)alloc_->AllocateRaw(0, size * sizeof(V*));
+      init_value_size = size;
+      return dev_init_value_address;
+    }
+  }
+
+  V** GetDevInitDefaultAddress(int64 size) {   
+    if(init_default_size >= size){
+      return dev_init_default_address;
+    }
+    else{
+      if(init_default_size != 0){
+        alloc_->DeallocateRaw(dev_init_default_address);
+      }
+      dev_init_default_address = (V**)alloc_->AllocateRaw(0, size * sizeof(V*));
+      init_default_size = size;
+      return dev_init_default_address;
+    }
+  }
 
  private:
   std::string name_;
@@ -304,6 +346,8 @@ class EmbeddingVar : public ResourceBase {
   mutex mu_;
 
   V* default_value_;
+  V **dev_value_address, **dev_init_value_address, **dev_init_default_address;
+  int64 value_size, init_value_size, init_default_size;
   int64 value_len_;
   Allocator* alloc_;
   embedding::StorageManager<K, V>* storage_manager_;
@@ -317,6 +361,9 @@ class EmbeddingVar : public ResourceBase {
       delete storage_manager_;
     }
     if(embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType()){
+      value_size = 0; 
+      init_value_size = 0; 
+      init_default_size = 0;
       if(dev_init_value_address != nullptr){
         alloc_->DeallocateRaw(dev_init_value_address);
         dev_init_value_address = nullptr;
