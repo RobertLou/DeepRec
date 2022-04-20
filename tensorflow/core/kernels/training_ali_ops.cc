@@ -119,6 +119,8 @@ class KvSparseApplyAdagradOp : public OpKernel {
           Tstep gs = global_step.scalar<Tstep>()();
           const TKey* key_base = &indices_flat(0);
           const T* grad_base = &grad_flat(0);
+          int block_dim = 128;
+          int embedding_dim = 128; 
           TKey *key_host;
           ValuePtr<T>* value_ptr = nullptr;
           std::vector<ValuePtr<T> *> value_ptrs;
@@ -128,23 +130,25 @@ class KvSparseApplyAdagradOp : public OpKernel {
             bool is_filter = false;
             var->LookupOrCreateKey(key_host[i], &value_ptr, &is_filter, gs);
             value_ptrs.push_back(value_ptr);
-          }
+          }//Lookup ValuePtr*
           free(key_host);
+          bool* init_flags = new bool[N]();
           T** a = new T*[N];
           T** v = new T*[N];
  
           for(int i = 0; i < N; i++){
-            a[i] = accum->LookupOrCreateEmb(value_ptrs[i], accum->GetDefaultValue(0));
-            v[i] = var->LookupOrCreateEmb(value_ptrs[i], accum->GetDefaultValue(0));
-          }
+            a[i] = accum->LookupOrCreateEmb(value_ptrs[i], init_flags[i]);
+            v[i] = var->LookupOrCreateEmb(value_ptrs[i], var->GetDefaultValue(0));
+          }//Get V*
+
+          accum->BatchInitEmb(N, a, accum->GetDefaultValue(0), init_flags, embedding_dim);
+
           T **dev_a, **dev_v;
           cudaMalloc(&dev_a, sizeof(T*) * N);
           cudaMalloc(&dev_v, sizeof(T*) * N);
           cudaMemcpy(dev_a, a, sizeof(T*) * N, cudaMemcpyHostToDevice);
           cudaMemcpy(dev_v, v, sizeof(T*) * N, cudaMemcpyHostToDevice);
-
-          int block_dim = 128;
-          int embedding_dim = 128; 
+   
           void* args[] = { (void*)&dev_a, (void*)&dev_v, (void*)&grad_base, (void*)&lr_scalar, (void*)&embedding_dim, (void*)&N};
           cudaLaunchKernel((void *)SparseApplyAdagradGPU<T>, (N + block_dim - 1) / block_dim * embedding_dim, block_dim, args, 0, NULL);
           cudaDeviceSynchronize();

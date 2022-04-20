@@ -476,7 +476,7 @@ class KvResourceGatherOp : public OpKernel {
           timespec start, end, part_start, part_end;
           clock_gettime(CLOCK_MONOTONIC, &start);
           clock_gettime(CLOCK_MONOTONIC, &part_start);
-          bool* init_flags = new bool[indices_size];
+          bool* init_flags = new bool[indices_size]();
           TValue** memcpy_address = new TValue*[indices_size];
           TValue** default_values = new TValue*[indices_size];
           auto do_work = [this, indices_flat,

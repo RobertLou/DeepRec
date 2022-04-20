@@ -25,22 +25,23 @@ __global__ void BatchInit(V** val, V** default_value, int value_len, int limit) 
   }
 }
 
-/*
-__global__ void BatchInit(V** val, V** default_value, int value_len, int limit) {
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if(i < limit){
-      for(int j = 0;j < value_len; ++j){
-        *(val[i] + j) = *(default_value[i] + j);
-    }
-  }
-}
-*/
-
-
 template __global__ void BatchInit<int>(int**, int**, int, int);
 template __global__ void BatchInit<float>(float**, float**, int, int);
 template __global__ void BatchInit<double>(double**, double**, int, int);
 template __global__ void BatchInit<long long>(long long**, long long**, int, int);
+
+template<class V>
+__global__ void BatchInitOneDefault(V** val, V* default_value, int value_len, int limit) {
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  if(i < limit * value_len){
+    *(val[i / value_len] + i % value_len) = default_value[i % value_len];
+  }
+}
+
+template __global__ void BatchInitOneDefault<int>(int**, int*, int, int);
+template __global__ void BatchInitOneDefault<float>(float**, float*, int, int);
+template __global__ void BatchInitOneDefault<double>(double**, double*, int, int);
+template __global__ void BatchInitOneDefault<long long>(long long**, long long*, int, int);
 
 template<class V>
 __global__ void BatchCopy(V** batch, V* val_base, int value_len, int limit) {

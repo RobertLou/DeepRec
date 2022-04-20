@@ -21,6 +21,9 @@ template<class V>
 __global__ void BatchInit(V** val, V** default_value, int value_len, int limit);
 
 template<class V>
+__global__ void BatchInitOneDefault(V** val, V* default_value, int value_len, int limit);
+
+template<class V>
 __global__ void BatchCopy(V** batch, V* val_base, int value_len, int limit);
 
 template<class V> 

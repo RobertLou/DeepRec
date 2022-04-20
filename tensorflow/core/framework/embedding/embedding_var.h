@@ -151,12 +151,15 @@ class EmbeddingVar : public ResourceBase {
     ValuePtr<V>* value_ptr = nullptr;
     for(int i = 0; i < limit - start; i++){
       TF_CHECK_OK(LookupOrCreateKey(keys[i], &value_ptr));
-      init_flags[i + start] = 0;
       memcpy_address[i + start] = LookupOrCreateEmb(value_ptr, init_flags[i + start]);
       value_ptr->AddFreq();
     }
   }
   
+  void BatchInitEmb(int64 size, V** memcpy_address, V* default_value, bool* init_flags, int64 value_len){
+    filter_->BatchInitEmb(size, memcpy_address, default_value, init_flags, value_len);
+  }
+
   void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, bool* init_flags, V** memcpy_address){
     for(int i = 0;i < size;i++){
       default_values[i] = (default_values[i] == nullptr) ? default_value_ : default_values[i];
