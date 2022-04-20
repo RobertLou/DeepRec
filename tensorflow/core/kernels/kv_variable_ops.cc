@@ -472,9 +472,10 @@ class KvResourceGatherOp : public OpKernel {
         Shard(worker_threads->num_threads, worker_threads->workers, indices_size,
             slice_bytes, do_work);
       } else {
+        timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
         if(ev->IsHBMDRAM()){
-          timespec start, end, part_start, part_end;
-          clock_gettime(CLOCK_MONOTONIC, &start);
+          timespec part_start, part_end;
           clock_gettime(CLOCK_MONOTONIC, &part_start);
           bool* init_flags = new bool[indices_size]();
           TValue** memcpy_address = new TValue*[indices_size];
@@ -508,15 +509,11 @@ class KvResourceGatherOp : public OpKernel {
           ev->CreateGPUBatch(out_base, default_values, indices_size, slice_elems, init_flags, memcpy_address);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "Memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
-          clock_gettime(CLOCK_MONOTONIC, &end);
-          LOG(INFO) << "Total time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms";
           delete []init_flags;
           delete []memcpy_address;
           delete []default_values;
         }
         else{
-          timespec start,end;
-          clock_gettime(CLOCK_MONOTONIC, &start);
           auto do_work = [this, indices_flat,
               out_base, slice_elems, c, ev, lookup_or_create_fn] (int64 start, int64 limit) {
             std::vector<TKey> ids;
@@ -540,9 +537,9 @@ class KvResourceGatherOp : public OpKernel {
           auto worker_threads = c->device()->tensorflow_cpu_worker_threads();
           Shard(8, worker_threads->workers, indices_size,
               slice_bytes, do_work);
-          clock_gettime(CLOCK_MONOTONIC, &end);
-          std::cout << "time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms" << std::endl;
-          }//ev->isHBMDRAM();
+        }//ev->isHBMDRAM();
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        LOG(INFO) << "Total time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms";
       }
     }
   }

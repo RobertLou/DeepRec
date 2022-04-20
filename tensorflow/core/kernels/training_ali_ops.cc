@@ -112,7 +112,12 @@ class KvSparseApplyAdagradOp : public OpKernel {
 
     if (N > 0) {
       if (inner_dim > 0) {
+        timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
         if(var->IsHBMDRAM()) {
+          timespec part_start, part_end;
+          
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
           auto indices_flat = indices.flat<TKey>();
           auto grad_flat = grad.flat_outer_dims<T>();
           T lr_scalar = lr.scalar<T>()();
@@ -121,6 +126,11 @@ class KvSparseApplyAdagradOp : public OpKernel {
           const T* grad_base = &grad_flat(0);
           int block_dim = 128;
           int embedding_dim = 128; 
+
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          LOG(INFO) << "Other time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
+
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
           TKey *key_host;
           ValuePtr<T>* value_ptr = nullptr;
           std::vector<ValuePtr<T> *> value_ptrs;
@@ -132,6 +142,10 @@ class KvSparseApplyAdagradOp : public OpKernel {
             value_ptrs.push_back(value_ptr);
           }//Lookup ValuePtr*
           free(key_host);
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          LOG(INFO) << "Lookup time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
+
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
           bool* init_flags = new bool[N]();
           T** a = new T*[N];
           T** v = new T*[N];
@@ -142,10 +156,14 @@ class KvSparseApplyAdagradOp : public OpKernel {
           }//Get V*
 
           accum->BatchInitEmb(N, a, accum->GetDefaultValue(0), init_flags, embedding_dim);
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          LOG(INFO) << "Init and Get V* time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
           T **dev_a, **dev_v;
-          cudaMalloc(&dev_a, sizeof(T*) * N);
-          cudaMalloc(&dev_v, sizeof(T*) * N);
+          Allocator* allocator = var->GetAllocator();
+          dev_a = (T**)allocator->AllocateRaw(0, sizeof(T*) * N);
+          dev_v = (T**)allocator->AllocateRaw(0, sizeof(T*) * N);
           cudaMemcpy(dev_a, a, sizeof(T*) * N, cudaMemcpyHostToDevice);
           cudaMemcpy(dev_v, v, sizeof(T*) * N, cudaMemcpyHostToDevice);
    
@@ -153,10 +171,13 @@ class KvSparseApplyAdagradOp : public OpKernel {
           cudaLaunchKernel((void *)SparseApplyAdagradGPU<T>, (N + block_dim - 1) / block_dim * embedding_dim, block_dim, args, 0, NULL);
           cudaDeviceSynchronize();
 
-          cudaFree(dev_a);
-          cudaFree(dev_v);
+          allocator->DeallocateRaw(dev_a);
+          allocator->DeallocateRaw(dev_v);
           delete[] a;
           delete[] v;
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          LOG(INFO) << "apply time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
+
         }
         else {
           auto indices_vec = indices.vec<TKey>();
@@ -185,6 +206,8 @@ class KvSparseApplyAdagradOp : public OpKernel {
           auto worker_threads = *(ctx->device()->tensorflow_cpu_worker_threads());
           Shard(worker_threads.num_threads, worker_threads.workers, N, cost, do_work);
         }//IsHBM_DRAM
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        LOG(INFO) << "Total Op time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms";
       }
     }
   }
