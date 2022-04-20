@@ -558,7 +558,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
       cudaMemcpy(dev_init_default_address, init_default_values.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
 
       void* args[] = { (void*)&dev_init_value_address, (void*)&dev_init_default_address, (void*)&value_len, (void*)&init_size};
-      cudaLaunchKernel((void *)BatchInit<V>, (init_size + block_dim - 1) * value_len / block_dim, block_dim, args, 0, NULL);
+      cudaLaunchKernel((void *)BatchInit<V>, (init_size + block_dim - 1) / block_dim * value_len, block_dim, args, 0, NULL);
       cudaDeviceSynchronize();
     }//Initialize using kernel function
     
@@ -566,7 +566,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     cudaMemcpy(dev_value_address, memcpy_address, sizeof(V *) * size, cudaMemcpyHostToDevice);
 
     void* args1[] = { (void*)&dev_value_address, (void*)&val_base, (void*)&slice_elems, (void*)&size};
-    cudaLaunchKernel((void *)BatchCopy<V>, (size + block_dim - 1) * value_len / block_dim, block_dim, args1, 0, NULL);
+    cudaLaunchKernel((void *)BatchCopy<V>, (size + block_dim - 1) / block_dim * value_len, block_dim, args1, 0, NULL);
     cudaDeviceSynchronize();
   }
 

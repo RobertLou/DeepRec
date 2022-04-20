@@ -1954,9 +1954,9 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         #r = sess.run([emb])
         #r, _, _ = sess.run([emb, train_op,loss])
         #r, _, _ = sess.run([emb, train_op,loss])
-        r, _, _ = sess.run([emb, train_op,loss])
-        r, _, _ = sess.run([emb, train_op,loss])
         #r, _, _ = sess.run([emb, train_op,loss])
+        r, _, _ = sess.run([emb, train_op,loss])
+        r, _, _ = sess.run([emb, train_op,loss])
         return r
 
     with ops.Graph().as_default() as g, ops.device('/gpu:0'):

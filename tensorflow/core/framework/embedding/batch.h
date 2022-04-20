@@ -24,6 +24,9 @@ template<class V>
 __global__ void BatchCopy(V** batch, V* val_base, int value_len, int limit);
 
 template<class V> 
+__global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit);
+
+template<class V> 
 __global__ void CopyEmbedding(V** batch, V* batch_data_space, int total_dims_, int limit);
 
 }  // namespace tensorflow

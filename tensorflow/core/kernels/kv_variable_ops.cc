@@ -508,9 +508,11 @@ class KvResourceGatherOp : public OpKernel {
           ev->CreateGPUBatch(out_base, default_values, indices_size, slice_elems, init_flags, memcpy_address);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "Memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
-
           clock_gettime(CLOCK_MONOTONIC, &end);
           LOG(INFO) << "Total time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms";
+          delete []init_flags;
+          delete []memcpy_address;
+          delete []default_values;
         }
         else{
           timespec start,end;
