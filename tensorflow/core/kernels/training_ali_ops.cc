@@ -125,7 +125,7 @@ class KvSparseApplyAdagradOp : public OpKernel {
           const TKey* key_base = &indices_flat(0);
           const T* grad_base = &grad_flat(0);
           int block_dim = 128;
-          int embedding_dim = 128; 
+          int embedding_dim = var->ValueLen(); 
 
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "Other time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
@@ -161,9 +161,8 @@ class KvSparseApplyAdagradOp : public OpKernel {
 
           clock_gettime(CLOCK_MONOTONIC, &part_start);
           T **dev_a, **dev_v;
-          Allocator* allocator = var->GetAllocator();
-          dev_a = (T**)allocator->AllocateRaw(0, sizeof(T*) * N);
-          dev_v = (T**)allocator->AllocateRaw(0, sizeof(T*) * N);
+          dev_a = (T**)var->GetBuffer2(N);
+          dev_v = (T**)var->GetBuffer3(N);
           cudaMemcpy(dev_a, a, sizeof(T*) * N, cudaMemcpyHostToDevice);
           cudaMemcpy(dev_v, v, sizeof(T*) * N, cudaMemcpyHostToDevice);
    
@@ -171,8 +170,6 @@ class KvSparseApplyAdagradOp : public OpKernel {
           cudaLaunchKernel((void *)SparseApplyAdagradGPU<T>, (N + block_dim - 1) / block_dim * embedding_dim, block_dim, args, 0, NULL);
           cudaDeviceSynchronize();
 
-          allocator->DeallocateRaw(dev_a);
-          allocator->DeallocateRaw(dev_v);
           delete[] a;
           delete[] v;
           clock_gettime(CLOCK_MONOTONIC, &part_end);

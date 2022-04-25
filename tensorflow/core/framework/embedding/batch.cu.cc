@@ -79,6 +79,20 @@ __global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embeddin
 /*
 __global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
+  int group = i / embedding_dim * embedding_dim;
+  int pos = i - group;
+  if(i < limit){
+    for(int j = 0;j < embedding_dim; ++j) {
+      *(a[group + j] + pos) += g[(group + j) * embedding_dim + pos] * g[(group + j) * embedding_dim + pos];
+      *(v[group + j] + pos) -= lr * g[(group + j) * embedding_dim + pos] / sqrt(*(a[group + j] + pos));
+    }
+  }
+}
+*/
+
+/*
+__global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit) {
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
   if(i < limit){
     for(int j = 0;j < embedding_dim; ++j) {
       *(a[i] + j) += g[i * embedding_dim + j] * g[i * embedding_dim + j];

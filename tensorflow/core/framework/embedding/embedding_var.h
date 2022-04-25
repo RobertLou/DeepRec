@@ -78,12 +78,12 @@ class EmbeddingVar : public ResourceBase {
         value_len_ = default_tensor.NumElements() / emb_config_.default_value_dim;
         default_value_ = TypedAllocator::Allocate<V>(alloc_, default_tensor.NumElements(), AllocationAttributes());
         auto default_tensor_flat = default_tensor.flat<V>();
-        dev_init_default_address = nullptr;
-        dev_init_value_address = nullptr;
-        dev_value_address = nullptr;
-        value_size = 0; 
-        init_value_size = 0; 
-        init_default_size = 0;
+        buffer1 = nullptr;
+        buffer2 = nullptr;
+        buffer3 = nullptr;       
+        buffer1_size = 0; 
+        buffer2_size = 0; 
+        buffer3_size = 0;
         cudaMemcpy(default_value_, &default_tensor_flat(0), default_tensor.TotalBytes(), cudaMemcpyHostToDevice);
       }else{
         alloc_ = ev_allocator();
@@ -300,45 +300,45 @@ class EmbeddingVar : public ResourceBase {
     return alloc_;
   }
   
-  V** GetDevValueAddress(int64 size) {   
-    if(value_size >= size){
-      return dev_value_address;
+  V** GetBuffer1(int64 size) {   
+    if(buffer1_size >= size){
+      return buffer1;
     }
     else{
-      if(value_size != 0){
-        alloc_->DeallocateRaw(dev_value_address);
+      if(buffer1_size != 0){
+        alloc_->DeallocateRaw(buffer1);
       }
-      dev_value_address = (V**)alloc_->AllocateRaw(0, size * sizeof(V*));
-      value_size = size;
-      return dev_value_address;
+      buffer1 = (V**)alloc_->AllocateRaw(0, size * sizeof(V*));
+      buffer1_size = size;
+      return buffer1;
     }
   }
 
-  V** GetDevInitValueAddress(int64 size) {   
-    if(init_value_size >= size){
-      return dev_init_value_address;
+  V** GetBuffer2(int64 size) {   
+    if(buffer2_size >= size){
+      return buffer2;
     }
     else{
-      if(init_value_size != 0){
-        alloc_->DeallocateRaw(dev_init_value_address);
+      if(buffer2_size != 0){
+        alloc_->DeallocateRaw(buffer2);
       }
-      dev_init_value_address =(V**)alloc_->AllocateRaw(0, size * sizeof(V*));
-      init_value_size = size;
-      return dev_init_value_address;
+      buffer2 =(V**)alloc_->AllocateRaw(0, size * sizeof(V*));
+      buffer2_size = size;
+      return buffer2;
     }
   }
 
-  V** GetDevInitDefaultAddress(int64 size) {   
-    if(init_default_size >= size){
-      return dev_init_default_address;
+  V** GetBuffer3(int64 size) {   
+    if(buffer3_size >= size){
+      return buffer3;
     }
     else{
-      if(init_default_size != 0){
-        alloc_->DeallocateRaw(dev_init_default_address);
+      if(buffer3_size != 0){
+        alloc_->DeallocateRaw(buffer3);
       }
-      dev_init_default_address = (V**)alloc_->AllocateRaw(0, size * sizeof(V*));
-      init_default_size = size;
-      return dev_init_default_address;
+      buffer3 = (V**)alloc_->AllocateRaw(0, size * sizeof(V*));
+      buffer3_size = size;
+      return buffer3;
     }
   }
 
@@ -349,8 +349,8 @@ class EmbeddingVar : public ResourceBase {
   mutex mu_;
 
   V* default_value_;
-  V **dev_value_address, **dev_init_value_address, **dev_init_default_address;
-  int64 value_size, init_value_size, init_default_size;
+  V **buffer1, **buffer2, **buffer3;
+  int64 buffer1_size, buffer2_size, buffer3_size;
   int64 value_len_;
   Allocator* alloc_;
   embedding::StorageManager<K, V>* storage_manager_;
@@ -364,20 +364,20 @@ class EmbeddingVar : public ResourceBase {
       delete storage_manager_;
     }
     if(embedding::StorageType::HBM_DRAM == storage_manager_->GetStorageType()){
-      value_size = 0; 
-      init_value_size = 0; 
-      init_default_size = 0;
-      if(dev_init_value_address != nullptr){
-        alloc_->DeallocateRaw(dev_init_value_address);
-        dev_init_value_address = nullptr;
+      buffer1_size = 0; 
+      buffer2_size = 0; 
+      buffer3_size = 0; 
+      if(buffer1 != nullptr){
+        alloc_->DeallocateRaw(buffer1);
+        buffer1 = nullptr;
       }
-      if(dev_init_default_address != nullptr){
-        alloc_->DeallocateRaw(dev_init_default_address);
-        dev_init_default_address = nullptr;
+      if(buffer2 != nullptr){
+        alloc_->DeallocateRaw(buffer2);
+        buffer2 = nullptr;
       }
-      if(dev_value_address != nullptr){
-        alloc_->DeallocateRaw(dev_value_address);
-        dev_value_address = nullptr;
+      if(buffer3 != nullptr){
+        alloc_->DeallocateRaw(buffer3);
+        buffer3 = nullptr;
       }
     }
     TypedAllocator::Deallocate(alloc_, default_value_, value_len_);

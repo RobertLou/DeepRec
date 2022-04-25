@@ -557,7 +557,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     int block_dim = 128;
 
     if(init_size != 0){
-      dev_init_value_address = ev_->GetDevInitValueAddress(size);
+      dev_init_value_address = ev_->GetBuffer2(size);
 
       cudaMemcpy(dev_init_value_address, init_mem_vals.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
 
@@ -581,8 +581,8 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
     int block_dim = 128;
 
     if(init_size != 0){
-      dev_init_value_address = ev_->GetDevInitValueAddress(size);
-      dev_init_default_address = ev_->GetDevInitDefaultAddress(size);
+      dev_init_value_address = ev_->GetBuffer2(size);
+      dev_init_default_address = ev_->GetBuffer3(size);
 
       cudaMemcpy(dev_init_value_address, init_mem_vals.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
       cudaMemcpy(dev_init_default_address, init_default_values.data(), sizeof(V *) * init_size, cudaMemcpyHostToDevice);
@@ -596,7 +596,7 @@ class NullableFilter : public EmbeddingFilter<K, V, EV> {
   void CreateGPUBatch(V* val_base, V** default_values, int64 size, int64 slice_elems, int64 value_len, bool* init_flags, V** memcpy_address){
     int block_dim = 128;
     BatchInitEmb(size, memcpy_address, default_values, init_flags, value_len);
-    V** dev_value_address = ev_->GetDevValueAddress(size);
+    V** dev_value_address = ev_->GetBuffer1(size);
     cudaMemcpy(dev_value_address, memcpy_address, sizeof(V *) * size, cudaMemcpyHostToDevice);
     void* args1[] = { (void*)&dev_value_address, (void*)&val_base, (void*)&slice_elems, (void*)&size};
     cudaLaunchKernel((void *)BatchCopy<V>, (size + block_dim - 1) / block_dim * value_len, block_dim, args1, 0, NULL);
