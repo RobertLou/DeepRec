@@ -51,6 +51,7 @@ from tensorflow.python.saved_model import builder as saved_model_builder
 from tensorflow.python.saved_model import loader
 from tensorflow.core.protobuf import config_pb2 as config_pb3
 import time
+import random
 
 class EmbeddingVariableTest(test_util.TensorFlowTestCase):
   def testDynamicDimensionEmbeddingVariable(self):
@@ -1933,9 +1934,15 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
     print("testEmbeddingVariableForHBMandDRAM")
     def runTestAdagrad(self, var, g):
       search_list=[]
+      search_list2=[]
       for i in range(0, 1024 * 128):
         search_list.append(i)
+      for i in range(0, 1024 * 128):
+        search_list2.append(i)
+      random.shuffle(search_list)
       emb = embedding_ops.embedding_lookup(var, math_ops.cast(search_list, dtypes.int64))
+      emb2 = embedding_ops.embedding_lookup(var, math_ops.cast(search_list2, dtypes.int64))
+      
       fun = math_ops.multiply(emb, 2.0, name='multiply')
       loss = math_ops.reduce_sum(fun, name='reduce_sum')
       gs = training_util.get_or_create_global_step()
@@ -1948,7 +1955,7 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_VAR_OPS))
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
         sess.run([init])
-        r = sess.run([emb])
+        r = sess.run([emb2])
         #r = sess.run([emb])
         #r = sess.run([emb])
         #r = sess.run([emb])

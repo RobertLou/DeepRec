@@ -154,10 +154,13 @@ class KvSparseApplyAdagradOp : public OpKernel {
             a[i] = accum->LookupOrCreateEmb(value_ptrs[i], init_flags[i]);
             v[i] = var->LookupOrCreateEmb(value_ptrs[i], var->GetDefaultValue(0));
           }//Get V*
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          LOG(INFO) << "Get V* time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
           accum->BatchInitEmb(N, a, accum->GetDefaultValue(0), init_flags, embedding_dim);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
-          LOG(INFO) << "Init and Get V* time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
+          LOG(INFO) << "Init time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
           clock_gettime(CLOCK_MONOTONIC, &part_start);
           T **dev_a, **dev_v;
