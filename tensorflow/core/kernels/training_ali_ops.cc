@@ -116,8 +116,6 @@ class KvSparseApplyAdagradOp : public OpKernel {
         clock_gettime(CLOCK_MONOTONIC, &start);
         if(var->IsHBMDRAM()) {
           timespec part_start, part_end;
-          
-          clock_gettime(CLOCK_MONOTONIC, &part_start);
           auto indices_flat = indices.flat<TKey>();
           auto grad_flat = grad.flat_outer_dims<T>();
           T lr_scalar = lr.scalar<T>()();
@@ -127,23 +125,26 @@ class KvSparseApplyAdagradOp : public OpKernel {
           int block_dim = 128;
           int embedding_dim = var->ValueLen(); 
 
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
+          TKey *ids = new TKey[N];
+          ValuePtr<T>** value_ptrs = new ValuePtr<T>*[N];
+          cudaMemcpy(ids, key_base, sizeof(TKey) * N, cudaMemcpyDeviceToHost);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
-          LOG(INFO) << "Other time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
+          LOG(INFO) << "Key memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
+
 
           clock_gettime(CLOCK_MONOTONIC, &part_start);
-          TKey *ids;
-          ValuePtr<T>* value_ptr = nullptr;
-          std::vector<ValuePtr<T> *> value_ptrs;
-          ids = (TKey *)malloc(sizeof(TKey) * N); 
-          cudaMemcpy(ids, key_base, sizeof(TKey) * N, cudaMemcpyDeviceToHost);
-
-
-          for(int i = 0; i < N; i++){
-            bool is_filter = false;
-            var->LookupOrCreateKey(ids[i], &value_ptr, &is_filter, gs);
-            value_ptrs.push_back(value_ptr);
-          }//Lookup ValuePtr*
-          
+          auto do_work = [var, ids, value_ptrs, gs] (int64 start, int64 limit) {
+            ValuePtr<T>* value_ptr = nullptr;
+            for(int i = start; i < limit; i++){
+              bool is_filter = false;
+              var->LookupOrCreateKey(ids[i], &value_ptr, &is_filter, gs);
+              value_ptrs[i] = value_ptr;
+            }
+          };
+          const int64 cost = 1000; //very unreliable estimate for cost per step.
+          auto worker_threads = ctx->device()->tensorflow_cpu_worker_threads();
+          Shard(worker_threads->num_threads, worker_threads->workers, N, cost, do_work);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "Lookup time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
@@ -151,11 +152,13 @@ class KvSparseApplyAdagradOp : public OpKernel {
           bool* init_flags = new bool[N]();
           T** a = new T*[N];
           T** v = new T*[N];
- 
-          for(int i = 0; i < N; i++){
-            a[i] = accum->LookupOrCreateEmb(value_ptrs[i], init_flags[i]);
-            v[i] = var->LookupOrCreateEmb(value_ptrs[i], var->GetDefaultValue(0));
-          }//Get V*
+          auto do_work2 = [var, accum, value_ptrs, init_flags, a, v] (int64 start, int64 limit) {
+            for(int i = start; i < limit; i++){
+              a[i] = accum->LookupOrCreateEmb(value_ptrs[i], init_flags[i]);
+              v[i] = var->LookupOrCreateEmb(value_ptrs[i], var->GetDefaultValue(0));
+            }
+          };//Get V*
+          Shard(worker_threads->num_threads, worker_threads->workers, N, cost, do_work2);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "Get V* time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
@@ -170,17 +173,20 @@ class KvSparseApplyAdagradOp : public OpKernel {
           dev_v = (T**)var->GetBuffer3(N);
           cudaMemcpy(dev_a, a, sizeof(T*) * N, cudaMemcpyHostToDevice);
           cudaMemcpy(dev_v, v, sizeof(T*) * N, cudaMemcpyHostToDevice);
-   
+          clock_gettime(CLOCK_MONOTONIC, &part_end);
+          LOG(INFO) << "address memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
+          
+          clock_gettime(CLOCK_MONOTONIC, &part_start);
           void* args[] = { (void*)&dev_a, (void*)&dev_v, (void*)&grad_base, (void*)&lr_scalar, (void*)&embedding_dim, (void*)&N};
           cudaLaunchKernel((void *)SparseApplyAdagradGPU<T>, (N + block_dim - 1) / block_dim * embedding_dim, block_dim, args, 0, NULL);
           cudaDeviceSynchronize();
-
-          delete[] a;
-          delete[] v;
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "apply time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
-          free(ids);
+          delete[] a;
+          delete[] v;    
+          delete[] ids;
+          delete[] value_ptrs;
         }
         else {
           auto indices_vec = indices.vec<TKey>();
