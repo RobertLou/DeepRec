@@ -480,22 +480,22 @@ class KvResourceGatherOp : public OpKernel {
           bool* init_flags = new bool[indices_size]();
           TValue** memcpy_address = new TValue*[indices_size];
           TValue** default_values = new TValue*[indices_size];
+          TKey* ids = new TKey[indices_size];
           auto do_work = [this, indices_flat,
               out_base, slice_elems, c, ev, lookup_or_create_fn_batch, 
-              default_values, init_flags, memcpy_address] (int64 start, int64 limit) {
-            std::vector<TKey> ids;
+              default_values, init_flags, memcpy_address, ids] (int64 start, int64 limit) {
             for (int64 i = start; i < limit; ++i) {
               TValue* default_v;
               default_v = ev->GetDefaultValuePtr() +
                             ((indices_flat(i)) % ev->GetDefaultValueDim()) * ev->ValueLen();
               default_values[i] = default_v;
-              ids.push_back(indices_flat(i));
+              ids[i] = indices_flat(i);
             }
-            ev->LookupWithFreqBatch(ids.data(), init_flags, memcpy_address, start, limit);
-            ev->storage_manager()->Schedule([ev, ids]() {
+            ev->LookupWithFreqBatch(ids, init_flags, memcpy_address, start, limit);
+            ev->storage_manager()->Schedule([ev, ids, start, limit]() {
               embedding::BatchCache<TKey>* cache = ev->Cache();
               if (cache) {
-                cache->add_to_rank(ids.data(), ids.size());
+                cache->add_to_rank(&ids[start], limit - start);
               }
             });
           };
@@ -512,6 +512,7 @@ class KvResourceGatherOp : public OpKernel {
           delete []init_flags;
           delete []memcpy_address;
           delete []default_values;
+          delete []ids;
         }
         else{
           auto do_work = [this, indices_flat,

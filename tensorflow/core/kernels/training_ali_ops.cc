@@ -131,17 +131,19 @@ class KvSparseApplyAdagradOp : public OpKernel {
           LOG(INFO) << "Other time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
           clock_gettime(CLOCK_MONOTONIC, &part_start);
-          TKey *key_host;
+          TKey *ids;
           ValuePtr<T>* value_ptr = nullptr;
           std::vector<ValuePtr<T> *> value_ptrs;
-          key_host = (TKey *)malloc(sizeof(TKey) * N); 
-          cudaMemcpy(key_host, key_base, sizeof(TKey) * N, cudaMemcpyDeviceToHost);
+          ids = (TKey *)malloc(sizeof(TKey) * N); 
+          cudaMemcpy(ids, key_base, sizeof(TKey) * N, cudaMemcpyDeviceToHost);
+
+
           for(int i = 0; i < N; i++){
             bool is_filter = false;
-            var->LookupOrCreateKey(key_host[i], &value_ptr, &is_filter, gs);
+            var->LookupOrCreateKey(ids[i], &value_ptr, &is_filter, gs);
             value_ptrs.push_back(value_ptr);
           }//Lookup ValuePtr*
-          free(key_host);
+          
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "Lookup time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
@@ -178,6 +180,7 @@ class KvSparseApplyAdagradOp : public OpKernel {
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "apply time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
+          free(ids);
         }
         else {
           auto indices_vec = indices.vec<TKey>();

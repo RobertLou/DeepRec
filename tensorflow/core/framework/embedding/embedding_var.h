@@ -149,9 +149,9 @@ class EmbeddingVar : public ResourceBase {
 
   void LookupWithFreqBatch(K* keys, bool *init_flags, V** memcpy_address, int start, int limit){
     ValuePtr<V>* value_ptr = nullptr;
-    for(int i = 0; i < limit - start; i++){
+    for(int i = start; i < limit; i++){
       TF_CHECK_OK(LookupOrCreateKey(keys[i], &value_ptr));
-      memcpy_address[i + start] = LookupOrCreateEmb(value_ptr, init_flags[i + start]);
+      memcpy_address[i] = LookupOrCreateEmb(value_ptr, init_flags[i]);
       value_ptr->AddFreq();
     }
   }
