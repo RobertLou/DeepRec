@@ -1473,7 +1473,7 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
     print("testEmbeddingVariableForDRAM")
     def runTestAdagrad(self, var, g):
       search_list=[]
-      for i in range(0, 1024 * 128):
+      for i in range(0, 1024 * 2):
         search_list.append(i)
       emb = embedding_ops.embedding_lookup(var, math_ops.cast(search_list, dtypes.int64))
       fun = math_ops.multiply(emb, 2.0, name='multiply')
@@ -1492,8 +1492,6 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         r = sess.run([emb])
         r, _, _ = sess.run([emb, train_op,loss])
         r, _, _ = sess.run([emb, train_op,loss])
-        #r, _, _ = sess.run([emb, train_op,loss])
-        #r, _, _ = sess.run([emb, train_op,loss])
         return r
 
     with ops.Graph().as_default() as g, ops.device('/cpu:0'):
@@ -1956,12 +1954,6 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
         sess.run([init])
         r = sess.run([emb2])
-        #r = sess.run([emb])
-        #r = sess.run([emb])
-        #r = sess.run([emb])
-        #r, _, _ = sess.run([emb, train_op,loss])
-        #r, _, _ = sess.run([emb, train_op,loss])
-        r, _, _ = sess.run([emb, train_op,loss])
         r, _, _ = sess.run([emb, train_op,loss])
         r, _, _ = sess.run([emb, train_op,loss])
         return r

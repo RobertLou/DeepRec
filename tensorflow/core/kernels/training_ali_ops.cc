@@ -132,7 +132,6 @@ class KvSparseApplyAdagradOp : public OpKernel {
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "Key memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
-
           clock_gettime(CLOCK_MONOTONIC, &part_start);
           auto do_work = [var, ids, value_ptrs, gs] (int64 start, int64 limit) {
             ValuePtr<T>* value_ptr = nullptr;
@@ -163,21 +162,21 @@ class KvSparseApplyAdagradOp : public OpKernel {
           LOG(INFO) << "Get V* time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
 
           clock_gettime(CLOCK_MONOTONIC, &part_start);
-          accum->BatchInitEmb(N, a, accum->GetDefaultValue(0), init_flags, embedding_dim);
-          clock_gettime(CLOCK_MONOTONIC, &part_end);
-          LOG(INFO) << "Init time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
-
-          clock_gettime(CLOCK_MONOTONIC, &part_start);
           T **dev_a, **dev_v;
+          T* default_value = accum->GetDefaultValue(0);
+          bool *dev_init_flags;
+          dev_init_flags = (bool*)var->GetBuffer1(N);
+          //cudaMalloc(&dev_init_flags, sizeof(bool) * N);
           dev_a = (T**)var->GetBuffer2(N);
           dev_v = (T**)var->GetBuffer3(N);
           cudaMemcpy(dev_a, a, sizeof(T*) * N, cudaMemcpyHostToDevice);
           cudaMemcpy(dev_v, v, sizeof(T*) * N, cudaMemcpyHostToDevice);
+          cudaMemcpy(dev_init_flags, init_flags, sizeof(bool) * N, cudaMemcpyHostToDevice);
           clock_gettime(CLOCK_MONOTONIC, &part_end);
           LOG(INFO) << "address memcpy time: " << ((double)(part_end.tv_sec - part_start.tv_sec) * 1000000000 + part_end.tv_nsec - part_start.tv_nsec) / 1000000 << "ms";
           
           clock_gettime(CLOCK_MONOTONIC, &part_start);
-          void* args[] = { (void*)&dev_a, (void*)&dev_v, (void*)&grad_base, (void*)&lr_scalar, (void*)&embedding_dim, (void*)&N};
+          void* args[] = { (void*)&dev_a, (void*)&dev_v, (void*)&grad_base, (void*)&lr_scalar, (void*)&embedding_dim, (void*)&N, (void*)&dev_init_flags, (void*)&default_value};
           cudaLaunchKernel((void *)SparseApplyAdagradGPU<T>, (N + block_dim - 1) / block_dim * embedding_dim, block_dim, args, 0, NULL);
           cudaDeviceSynchronize();
           clock_gettime(CLOCK_MONOTONIC, &part_end);

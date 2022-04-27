@@ -68,27 +68,19 @@ template __global__ void BatchCopy<double>(double**, double*, int, int);
 template __global__ void BatchCopy<long long>(long long**, long long*, int, int);
 
 template<class V>
-__global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit) {
+__global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit, bool* init_flags, V* default_value) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if(i < limit * embedding_dim){
-    *(a[i /embedding_dim] + i % embedding_dim) += g[i] * g[i];
-    *(v[i / embedding_dim] + i % embedding_dim) -= lr * g[i] / sqrt(*(a[i / embedding_dim] + i % embedding_dim));
-  }
-}
+  int item_id = i / embedding_dim;
+  int item_pos = i % embedding_dim;
 
-/*
-__global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit) {
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  int group = i / embedding_dim * embedding_dim;
-  int pos = i - group;
-  if(i < limit){
-    for(int j = 0;j < embedding_dim; ++j) {
-      *(a[group + j] + pos) += g[(group + j) * embedding_dim + pos] * g[(group + j) * embedding_dim + pos];
-      *(v[group + j] + pos) -= lr * g[(group + j) * embedding_dim + pos] / sqrt(*(a[group + j] + pos));
+  if(i < limit * embedding_dim){
+    if(init_flags[item_id]){
+      *(a[item_id] + item_pos) = default_value[item_pos];
     }
+    *(a[item_id] + item_pos) += g[i] * g[i];
+    *(v[item_id] + item_pos) -= lr * g[i] * rsqrt(*(a[item_id] + item_pos));
   }
 }
-*/
 
 /*
 __global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit) {
@@ -103,8 +95,8 @@ __global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embeddin
 */
 
 //template __global__ void SparseApplyAdagradGPU<int>(int**, int**, int*, float, int, int);
-template __global__ void SparseApplyAdagradGPU<float>(float**, float**, float*, float, int, int);
-template __global__ void SparseApplyAdagradGPU<double>(double**, double**, double*, float, int, int);
+template __global__ void SparseApplyAdagradGPU<float>(float**, float**, float*, float, int, int, bool*, float*);
+template __global__ void SparseApplyAdagradGPU<double>(double**, double**, double*, float, int, int, bool*, double*);
 //template __global__ void SparseApplyAdagradGPU<long long>(long long**, long long**, long long*, float, int, int);
 
 

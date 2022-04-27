@@ -430,11 +430,8 @@ class KvResourceGatherOp : public OpKernel {
 
     std::function<void(TKey, TValue*, TValue*)> lookup_or_create_fn;
     std::function<void(TKey*, TValue*, TValue**, int64, int64)> lookup_or_create_fn_batch;
-    if(ev->IsHBMDRAM()){
-      //lookup_or_create_fn_batch = [ev] (TKey* indexs, TValue* out_base, TValue** default_vs, int64 size, int64 slice_elems){
-      //                            ev->LookupOrCreateWithFreqGPUBatch(indexs, out_base, default_vs, size, slice_elems);};
-    }
-    else if (ev->IsMultiLevel()) {
+    
+    if (ev->IsMultiLevel()) {
       lookup_or_create_fn = [ev] (TKey index, TValue* out, TValue* default_v){
                                   ev->LookupOrCreateWithFreq(index, out, default_v);};
     } else {
