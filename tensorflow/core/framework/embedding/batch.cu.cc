@@ -16,56 +16,24 @@ limitations under the License.
 #include "tensorflow/core/framework/embedding/batch.h"
 
 namespace tensorflow {
-
 template<class V>
-__global__ void BatchInit(V** val, V** default_value, int value_len, int limit) {
+__global__ void BatchCopy(V** batch, V* val_base, int value_len, int limit, V** default_value, bool* init_flags) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if(i < limit * value_len){
-    *(val[i / value_len] + i % value_len) = *(default_value[i / value_len] + i % value_len);
+  int item_id = i / value_len;
+  int item_pos = i % value_len;
+
+  if(i < limit * value_len){ 
+    if(init_flags[item_id]){
+      *(batch[item_id] + item_pos) = *(default_value[item_id] + item_pos);
+    } 
+    val_base[i] = *(batch[item_id] + item_pos);
   }
 }
 
-template __global__ void BatchInit<int>(int**, int**, int, int);
-template __global__ void BatchInit<float>(float**, float**, int, int);
-template __global__ void BatchInit<double>(double**, double**, int, int);
-template __global__ void BatchInit<long long>(long long**, long long**, int, int);
-
-template<class V>
-__global__ void BatchInitOneDefault(V** val, V* default_value, int value_len, int limit) {
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if(i < limit * value_len){
-    *(val[i / value_len] + i % value_len) = default_value[i % value_len];
-  }
-}
-
-template __global__ void BatchInitOneDefault<int>(int**, int*, int, int);
-template __global__ void BatchInitOneDefault<float>(float**, float*, int, int);
-template __global__ void BatchInitOneDefault<double>(double**, double*, int, int);
-template __global__ void BatchInitOneDefault<long long>(long long**, long long*, int, int);
-
-template<class V>
-__global__ void BatchCopy(V** batch, V* val_base, int value_len, int limit) {
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if(i < limit * value_len){  
-    val_base[i] = *(batch[i / value_len] + i % value_len);
-  }
-}
-
-/*
-__global__ void BatchCopy(V** batch, V* val_base, int value_len, int limit) {
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if(i < limit){
-      for(int j = 0;j < value_len; ++j){
-      val_base[i * value_len + j] = *(batch[i] + j);
-    }
-  }
-}
-*/
-
-template __global__ void BatchCopy<int>(int**, int*, int, int);
-template __global__ void BatchCopy<float>(float**, float*, int, int);
-template __global__ void BatchCopy<double>(double**, double*, int, int);
-template __global__ void BatchCopy<long long>(long long**, long long*, int, int);
+template __global__ void BatchCopy<int>(int**, int*, int, int, int**, bool*);
+template __global__ void BatchCopy<float>(float**, float*, int, int, float**, bool*);
+template __global__ void BatchCopy<double>(double**, double*, int, int, double**, bool*);
+template __global__ void BatchCopy<long long>(long long**, long long*, int, int, long long**, bool*);
 
 template<class V>
 __global__ void SparseApplyAdagradGPU(V** a, V** v, V* g, float lr, int embedding_dim, int limit, bool* init_flags, V* default_value) {
