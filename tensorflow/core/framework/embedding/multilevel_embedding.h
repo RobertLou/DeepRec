@@ -157,7 +157,7 @@ class StorageManager {
         kvs_[1].first->SetTotalDims(total_dims_);
       }
       if (hash_table_count_ > 1) {
-        cache_capacity_ = 1024 * 1024 * 1024 / total_dims_ * sizeof(V); 
+        cache_capacity_ = 1024 * 1024 / total_dims_ * sizeof(V); 
         done_ = true;
         LOG(INFO) << "Cache cache_capacity: " << cache_capacity_;
       }
@@ -420,27 +420,46 @@ class StorageManager {
       if (shutdown_) {
         break;
       }
-      const int kTimeoutMilliseconds = 10 * 1;
+      const int kTimeoutMilliseconds = 1;
       WaitForMilliseconds(&l, &shutdown_cv_, kTimeoutMilliseconds);
 
       int cache_count = cache_->size();
       if (cache_count > cache_capacity_) {
         // eviction
+        LOG(INFO) << "eviction here";
+        LOG(INFO) << "cache_count:" << cache_count;
+        LOG(INFO) << "cache_capacity_:" << cache_capacity_;
+        
         int k_size = cache_count - cache_capacity_;
         k_size = std::min(k_size, kSize);
         size_t true_size = cache_->get_evic_ids(evic_ids, k_size);
         ValuePtr<V>* value_ptr;
         std::vector<K> keys;
         std::vector<ValuePtr<V>*> value_ptrs;
-        for (int64 i = 0; i < true_size; ++i) {
-          if (kvs_[0].first->Lookup(evic_ids[i], &value_ptr).ok()) {
-            TF_CHECK_OK(kvs_[0].first->Remove(evic_ids[i]));
-            TF_CHECK_OK(kvs_[1].first->Commit(evic_ids[i], value_ptr));
-            // delete value_ptr is nessary;
-            value_ptr->Destroy(kvs_[0].second);
-            delete value_ptr;
-          } else {
-            // bypass
+        if(sc_.type == StorageType::HBM_DRAM){
+          for (int64 i = 0; i < 4; ++i) {
+            if (kvs_[0].first->Lookup(evic_ids[i], &value_ptr).ok()) {
+              TF_CHECK_OK(kvs_[0].first->Remove(evic_ids[i]));
+              TF_CHECK_OK(kvs_[1].first->Commit(evic_ids[i], value_ptr));
+              // delete value_ptr is nessary;
+              value_ptr->Destroy(kvs_[0].second);
+              delete value_ptr;
+            } else {
+              // bypass
+            }
+          }
+        }
+        else{
+          for (int64 i = 0; i < true_size; ++i) {
+            if (kvs_[0].first->Lookup(evic_ids[i], &value_ptr).ok()) {
+              TF_CHECK_OK(kvs_[0].first->Remove(evic_ids[i]));
+              TF_CHECK_OK(kvs_[1].first->Commit(evic_ids[i], value_ptr));
+              // delete value_ptr is nessary;
+              value_ptr->Destroy(kvs_[0].second);
+              delete value_ptr;
+            } else {
+              // bypass
+            }
           }
         }
       }

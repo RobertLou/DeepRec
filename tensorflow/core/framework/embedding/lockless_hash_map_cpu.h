@@ -21,7 +21,7 @@ limitations under the License.
 #include "tensorflow/core/framework/embedding/value_ptr.h"
 #include "tensorflow/core/framework/embedding/batch.h"
 #include "tensorflow/core/lib/core/status.h"
-//#include "tensorflow/core/util/gpu_kernel_helper.h"
+
 
 namespace tensorflow {
 
@@ -82,13 +82,12 @@ class LocklessHashMapCPU : public KVInterface<K, V> {
     total_dims_ = total_dims;
   }
 
-  Status Commit(K key, ValuePtr<V>* value_ptr) { 
+  Status Commit(K key, const ValuePtr<V>* value_ptr) { 
+    LOG(INFO) << "1234";
     ValuePtr<V>* cpu_value_ptr = new NormalContiguousValuePtr<V>(ev_allocator(), total_dims_);
-    cudaMemcpy((char *)cpu_value_ptr->GetPtr() + sizeof(FixedLengthHeader), *(char **)((char*)value_ptr->GetPtr() + sizeof(FixedLengthHeader)), total_dims_ * sizeof(V), cudaMemcpyDeviceToHost);
-    memcpy((char *)cpu_value_ptr->GetPtr(),(char *)value_ptr->GetPtr(),sizeof(FixedLengthHeader));
-    value_ptr->Destroy(nullptr);
-    delete value_ptr;
-    Insert(key, cpu_value_ptr);
+    //cudaMemcpy((char *)cpu_value_ptr->GetPtr() + sizeof(FixedLengthHeader), *(char **)((char*)value_ptr->GetPtr() + sizeof(FixedLengthHeader)), total_dims_ * sizeof(V), cudaMemcpyDeviceToHost);
+    //memcpy((char *)cpu_value_ptr->GetPtr(),(char *)value_ptr->GetPtr(),sizeof(FixedLengthHeader));
+    //Insert(key, cpu_value_ptr);
     return Status::OK();
   }
   
