@@ -83,11 +83,10 @@ class LocklessHashMapCPU : public KVInterface<K, V> {
   }
 
   Status Commit(K key, const ValuePtr<V>* value_ptr) { 
-    LOG(INFO) << "1234";
-    ValuePtr<V>* cpu_value_ptr = new NormalContiguousValuePtr<V>(ev_allocator(), total_dims_);
-    //cudaMemcpy((char *)cpu_value_ptr->GetPtr() + sizeof(FixedLengthHeader), *(char **)((char*)value_ptr->GetPtr() + sizeof(FixedLengthHeader)), total_dims_ * sizeof(V), cudaMemcpyDeviceToHost);
-    //memcpy((char *)cpu_value_ptr->GetPtr(),(char *)value_ptr->GetPtr(),sizeof(FixedLengthHeader));
-    //Insert(key, cpu_value_ptr);
+    ValuePtr<V>* cpu_value_ptr = new NormalContiguousValuePtr<V>(cpu_allocator(), total_dims_);
+    cudaMemcpy((char *)cpu_value_ptr->GetPtr() + sizeof(FixedLengthHeader), *(char **)((char*)value_ptr->GetPtr() + sizeof(FixedLengthHeader)), total_dims_ * sizeof(V), cudaMemcpyDeviceToHost);
+    memcpy((char *)cpu_value_ptr->GetPtr(),(char *)value_ptr->GetPtr(),sizeof(FixedLengthHeader));
+    Insert(key, cpu_value_ptr);
     return Status::OK();
   }
   
@@ -106,7 +105,6 @@ class LocklessHashMapCPU : public KVInterface<K, V> {
     }
     cudaMemcpy(dev_value_address, value_address, sizeof(V *) * batch_size, cudaMemcpyHostToDevice);
     //Launch Kernel,Copy data to continuous place
-    //CopyEmbedding<V><<<1,batch_size>>>(dev_value_address, dev_batch_data_place, total_dims_);
     int block_dim = 128;
     void* args[] = { (void*)&dev_value_address, (void*)&dev_batch_data_place, (void*)&total_dims_, (void*)&batch_size};
 

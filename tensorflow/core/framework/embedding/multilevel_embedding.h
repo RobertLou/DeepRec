@@ -115,7 +115,7 @@ class StorageManager {
         new_value_ptr_fn_ = [] (Allocator* allocator, size_t size) { return new NormalGPUValuePtr<V>(allocator, size); };
         LOG(INFO) << "StorageManager::HBM_DRAM: " << name_;
         kvs_.push_back(std::make_pair(new LocklessHashMap<K, V>(), alloc_));
-        kvs_.push_back(std::make_pair(new LocklessHashMapCPU<K, V>(), alloc_));
+        kvs_.push_back(std::make_pair(new LocklessHashMapCPU<K, V>(), cpu_allocator()));
         break;
       default:
         VLOG(1) << "StorageManager::default" << name_;
@@ -437,7 +437,9 @@ class StorageManager {
         std::vector<K> keys;
         std::vector<ValuePtr<V>*> value_ptrs;
         if(sc_.type == StorageType::HBM_DRAM){
-          for (int64 i = 0; i < 4; ++i) {
+          timespec start, end;
+          clock_gettime(CLOCK_MONOTONIC, &start);
+          for (int64 i = 0; i < true_size; ++i) {
             if (kvs_[0].first->Lookup(evic_ids[i], &value_ptr).ok()) {
               TF_CHECK_OK(kvs_[0].first->Remove(evic_ids[i]));
               TF_CHECK_OK(kvs_[1].first->Commit(evic_ids[i], value_ptr));
@@ -448,6 +450,8 @@ class StorageManager {
               // bypass
             }
           }
+          clock_gettime(CLOCK_MONOTONIC, &end);
+          LOG(INFO) << "Evict Time: " << ((double)(end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec) / 1000000 << "ms";
         }
         else{
           for (int64 i = 0; i < true_size; ++i) {
