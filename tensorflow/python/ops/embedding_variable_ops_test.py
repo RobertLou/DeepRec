@@ -12,6 +12,9 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
+import pandas as pd
+import random
+import time
 import os
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -2307,6 +2310,53 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
     for i in range(0, 6):
       for j in range(0, 3):
         self.assertEqual(emb1[i][j], emb2[i][j])
+
+  def testEmbeddingVariableForFreq(self):
+    print("testEmbeddingVariableForFreq")
+    df = pd.read_csv('/root/code/DeepRec/tensorflow/python/ops/ad_feature.csv')
+    print(df)
+    data_columns = pd.to_numeric(df['cate_id']).tolist()
+    random.shuffle (data_columns)
+    print(data_columns[0])
+    
+    batch_list = [data_columns[i:i + 2048] for i in range(0, len(data_columns), 2048)]
+    print(batch_list[0])
+    
+
+    def runTestAdagrad(self, var, g):
+      ids = array_ops.placeholder(dtypes.int64, name="ids")
+      emb = embedding_ops.embedding_lookup(var, ids)
+      #emb = embedding_ops.embedding_lookup(var, math_ops.cast([1, 2, 3, 4, 5, 6, 7, 8, 9], dtypes.int64))
+      fun = math_ops.multiply(emb, 2.0, name='multiply')
+      loss = math_ops.reduce_sum(fun, name='reduce_sum')
+      gs = training_util.get_or_create_global_step()
+      opt = adagrad.AdagradOptimizer(0.1)
+      g_v = opt.compute_gradients(loss)
+      train_op = opt.apply_gradients(g_v)
+      init = variables.global_variables_initializer()
+      with self.test_session(graph=g) as sess:
+        sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_VAR_OPS))
+        sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
+        sess.run([init])
+        for i in xrange(4):
+          for batch in batch_list:
+            r = sess.run([emb], feed_dict={'ids:0': batch})
+        return r
+
+    with ops.Graph().as_default() as g, ops.device('/cpu:0'):
+      db_directory = self.get_temp_dir()
+      emb_var = variable_scope.get_embedding_variable("var_1",
+            embedding_dim = 128,
+            initializer=init_ops.ones_initializer(dtypes.float32),
+            partitioner=partitioned_variables.fixed_size_partitioner(num_shards=1),
+            steps_to_live=5,
+            ev_option = variables.EmbeddingVariableOption(storage_option=variables.StorageOption(storage_type=config_pb2.StorageType.DRAM_SSDHASH,
+                                                                                                 storage_path="/tmp/ssd_utpy",
+                                                                                                 storage_size=[1 << 22])))
+      t1 = time.clock()
+      emb1 = runTestAdagrad(self, emb_var, g)
+      t2 = time.clock()
+      print(t2 - t1)
 
 if __name__ == "__main__":
   googletest.main()

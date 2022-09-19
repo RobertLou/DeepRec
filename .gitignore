@@ -44,3 +44,5 @@ Podfile.lock
 Pods
 xcuserdata
 *~
+tensorflow/python/ops/ad_feature.csv
+tensorflow/python/ops/raw_sample.csv
