@@ -187,6 +187,7 @@ class StorageManager {
       }
       if (hash_table_count_ > 1) {
         cache_capacity_ = sc_.size[0] / (total_dims_ * sizeof(V));
+        max_cache_capacity_ = cache_capacity_;
         done_ = true;
         LOG(INFO) << "Cache cache_capacity: " << cache_capacity_;
       }
@@ -379,6 +380,14 @@ Status GetOrCreate(K key, ValuePtr<V>** value_ptr, size_t size, bool &need_copyb
 
   int64 CacheSize() const {
     return cache_capacity_;
+  }
+
+  int64 MaxCacheSize() const {
+    return max_cache_capacity_;
+  }
+
+  void SetCacheSize(int64 n){
+    cache_capacity_ = n;
   }
 
   Status GetSnapshot(std::vector<K>* key_list,
@@ -622,6 +631,7 @@ Status GetOrCreate(K key, ValuePtr<V>** value_ptr, size_t size, bool &need_copyb
   Thread* eviction_thread_;
   BatchCache<K>* cache_;
   int64 cache_capacity_;
+  int64 max_cache_capacity_;
   mutex mu_;
   condition_variable shutdown_cv_;
   volatile bool shutdown_ GUARDED_BY(mu_) = false;

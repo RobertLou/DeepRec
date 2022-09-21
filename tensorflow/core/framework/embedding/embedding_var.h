@@ -434,6 +434,20 @@ class EmbeddingVar : public ResourceBase {
     }
   }
 
+  void DecreaseCacheCapacity(){
+    int64 new_cache_capacity = (int64)(storage_manager_->CacheSize() * 0.95);
+    LOG(INFO) << new_cache_capacity;
+    storage_manager_->SetCacheSize(new_cache_capacity);
+  }
+
+  void IncreaseCacheCapacity(){
+    if(storage_manager_->CacheSize() < storage_manager_->MaxCacheSize()){
+      int64 new_cache_capacity = (int64)(storage_manager_->CacheSize() * 1.05) < storage_manager_->MaxCacheSize() ? (int64)(storage_manager_->CacheSize() * 1.05): storage_manager_->MaxCacheSize();
+      LOG(INFO) << new_cache_capacity;
+      storage_manager_->SetCacheSize(new_cache_capacity);
+    }
+  }
+
  private:
   std::string name_;
   bool is_initialized_ = false;

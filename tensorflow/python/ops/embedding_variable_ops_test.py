@@ -2313,15 +2313,14 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
 
   def testEmbeddingVariableForFreq(self):
     print("testEmbeddingVariableForFreq")
-    df = pd.read_csv('/root/code/DeepRec/tensorflow/python/ops/ad_feature.csv')
+    df = pd.read_csv('/root/code/DeepRec/tensorflow/python/ops/raw_sample.csv')
     print(df)
-    data_columns = pd.to_numeric(df['cate_id']).tolist()
+    data_columns = pd.to_numeric(df['adgroup_id']).tolist()
     random.shuffle (data_columns)
     print(data_columns[0])
     
     batch_list = [data_columns[i:i + 2048] for i in range(0, len(data_columns), 2048)]
-    print(batch_list[0])
-    
+    print(len(batch_list))
 
     def runTestAdagrad(self, var, g):
       ids = array_ops.placeholder(dtypes.int64, name="ids")
@@ -2338,10 +2337,10 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_VAR_OPS))
         sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
         sess.run([init])
-        for i in xrange(4):
-          for batch in batch_list:
-            r = sess.run([emb], feed_dict={'ids:0': batch})
-        return r
+        for i in xrange(1):
+          for j in range(0,len(batch_list)):
+            print(j)
+            sess.run([emb], feed_dict={'ids:0': batch_list[j]}) 
 
     with ops.Graph().as_default() as g, ops.device('/cpu:0'):
       db_directory = self.get_temp_dir()
@@ -2352,9 +2351,9 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
             steps_to_live=5,
             ev_option = variables.EmbeddingVariableOption(storage_option=variables.StorageOption(storage_type=config_pb2.StorageType.DRAM_SSDHASH,
                                                                                                  storage_path="/tmp/ssd_utpy",
-                                                                                                 storage_size=[1 << 22])))
+                                                                                                 storage_size=[1 << 28])))
       t1 = time.clock()
-      emb1 = runTestAdagrad(self, emb_var, g)
+      runTestAdagrad(self, emb_var, g)
       t2 = time.clock()
       print(t2 - t1)
 

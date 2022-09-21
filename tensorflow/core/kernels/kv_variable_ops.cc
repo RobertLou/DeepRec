@@ -538,7 +538,18 @@ class KvResourceGatherOp : public OpKernel {
       ev->storage_manager()->Schedule([ev, indices]() {
         embedding::BatchCache<TKey>* cache = ev->Cache();
         if (cache) {
-          cache->add_to_rank(indices);
+          cache->reset_status();
+          cache->add_to_rank(indices);     
+          LOG(INFO) << cache->DebugString();
+          LOG(INFO) << cache->size();
+          /*
+          if(cache->GetHitRate() > 90){
+            ev->DecreaseCacheCapacity();
+          }
+          if(cache->GetHitRate() < 85){
+            ev->IncreaseCacheCapacity();
+          }
+          */
         }
       });
     }
