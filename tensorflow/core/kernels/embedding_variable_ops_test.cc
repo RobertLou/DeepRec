@@ -47,6 +47,18 @@ namespace {
 const int THREADNUM = 16;
 const int64 max = 2147483647;
 
+template<class K, class V>
+class TestableEmbeddingVar : public EmbeddingVar<K, V> {
+ public:
+  TestableEmbeddingVar(const string& name,
+                       embedding::StorageManager<K, V>* storage_manager,
+                       EmbeddingConfig emb_cfg = EmbeddingConfig(),
+                       Allocator* alloc = nullptr) : EmbeddingVar<K, V>(
+                         name, storage_manager, emb_cfg, alloc) {}
+
+  using EmbeddingVar<K, V>::GetFilter;
+};
+
 struct ProcMemory {
   long size;      // total program size
   long resident;  // resident set size
@@ -114,8 +126,7 @@ TEST(TensorBundleTest, TestEVShrinkL2) {
   auto storage_manager = new embedding::StorageManager<int64, float>(
                  "name", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* emb_var
-    = new EmbeddingVar<int64, float>("name",
+  auto emb_var = new EmbeddingVar<int64, float>("name",
         storage_manager, EmbeddingConfig(0, 0, 1, 1, "", -1, 0, 99999, 14.0));
   emb_var ->Init(value, 1);
   
@@ -146,14 +157,10 @@ TEST(TensorBundleTest, TestEVShrinkLockless) {
   auto storage_manager = new embedding::StorageManager<int64, float>(
                  "name", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* emb_var
-    = new EmbeddingVar<int64, float>("name",
+  auto emb_var = new EmbeddingVar<int64, float>("name",
         storage_manager, EmbeddingConfig(0, 0, 1, 1, "", steps_to_live));
   emb_var ->Init(value, 1);
-
-
   LOG(INFO) << "size:" << emb_var->Size();
-
 
   for (int64 i=0; i < insert_num; ++i) {
     ValuePtr<float>* value_ptr = nullptr;
@@ -170,9 +177,7 @@ TEST(TensorBundleTest, TestEVShrinkLockless) {
 
   ASSERT_EQ(size, insert_num);
   ASSERT_EQ(emb_var->Size(), steps_to_live);
-
 }
-
 
 TEST(EmbeddingVariableTest, TestEmptyEV) {
   int64 value_size = 8;
@@ -180,11 +185,10 @@ TEST(EmbeddingVariableTest, TestEmptyEV) {
   test::FillValues<float>(&value, std::vector<float>(value_size, 9.0));
   {
     auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+        "EmbeddingVar", embedding::StorageConfig());
     TF_CHECK_OK(storage_manager->Init());
-    EmbeddingVar<int64, float>* variable
-              = new EmbeddingVar<int64, float>("EmbeddingVar",
-                  storage_manager);
+    auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+        storage_manager);
     variable->Init(value, 1);
 
     LOG(INFO) << "size:" << variable->Size();
@@ -244,16 +248,14 @@ TEST(EmbeddingVariableTest, TestEmptyEV) {
 }
 
 TEST(EmbeddingVariableTest, TestEVExportSmallLockless) {
-
   int64 value_size = 8;
   Tensor value(DT_FLOAT, TensorShape({value_size}));
   test::FillValues<float>(&value, std::vector<float>(value_size, 9.0));
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* variable
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager, EmbeddingConfig(0, 0, 1, 1, "", 5));
+  auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager, EmbeddingConfig(0, 0, 1, 1, "", 5));
   variable->Init(value, 1);
 
   Tensor part_offset_tensor(DT_INT32,  TensorShape({kSavedPartitionNum + 1}));
@@ -266,7 +268,6 @@ TEST(EmbeddingVariableTest, TestEVExportSmallLockless) {
   }
 
   LOG(INFO) << "size:" << variable->Size();
-
 
   BundleWriter writer(Env::Default(), Prefix("foo"));
   DumpEmbeddingValues(variable, "var/part_0", &writer, &part_offset_tensor);
@@ -327,11 +328,10 @@ TEST(EmbeddingVariableTest, TestEVExportLargeLockless) {
   test::FillValues<float>(&value, std::vector<float>(value_size, 9.0));
   float* fill_v = (float*)malloc(value_size * sizeof(float));
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* variable
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager, EmbeddingConfig(0, 0, 1, 1, "", 5));
+  auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager, EmbeddingConfig(0, 0, 1, 1, "", 5));
   variable->Init(value, 1);
 
   Tensor part_offset_tensor(DT_INT32,  TensorShape({kSavedPartitionNum + 1}));
@@ -412,11 +412,10 @@ TEST(EmbeddingVariableTest, TestMultiInsertion) {
   test::FillValues<float>(&value, std::vector<float>(value_size, 9.0));
   float* fill_v = (float*)malloc(value_size * sizeof(float));
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* variable
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager);
+  auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager);
 
   variable->Init(value, 1);
 
@@ -463,11 +462,10 @@ TEST(EmbeddingVariableTest, TestBloomFilter) {
   float* fill_v = (float*)malloc(value_size * sizeof(float)); 
 
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* var 
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
+  auto var = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
           EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0, "normal", 10, 0.01));
 
   var->Init(value, 1);
@@ -488,7 +486,6 @@ TEST(EmbeddingVariableTest, TestBloomFilter) {
   embedding::Iterator* it = nullptr;
   var->GetSnapshot(&keylist, &valuelist, &version_list, &freq_list, &it);
   ASSERT_EQ(var->Size(), keylist.size());  
-
 }
 
 TEST(EmbeddingVariableTest, TestBloomCounterInt64) {
@@ -497,12 +494,12 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt64) {
   test::FillValues<float>(&value, std::vector<float>(value_size, 10.0));
   float* fill_v = (float*)malloc(value_size * sizeof(float)); 
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* var 
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
-          EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0, "normal", 10, 0.01, DT_UINT64));
+  auto var = new TestableEmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
+      EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0,
+        "normal", 10, 0.01, DT_UINT64));
 
   var->Init(value, 1);
 
@@ -544,8 +541,10 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt64) {
   }
 
   auto filter = var->GetFilter();
-  auto bloom_filter = static_cast<BloomFilter<int64, float, EmbeddingVar<int64, float>>*>(filter);
-  int64* counter = (int64*)bloom_filter->GetBloomCounter();//(int64 *)var->GetBloomCounter(); 
+  auto bloom_filter = static_cast<BloomFilter<int64, float,
+       EmbeddingVar<int64, float>>*>(filter);
+  //(int64 *)var->GetBloomCounter(); 
+  int64* counter = (int64*)bloom_filter->GetBloomCounter();
 
   for (auto it: hash_val1) {
     ASSERT_EQ(counter[it], tab[it]);
@@ -568,12 +567,12 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt32) {
   float* fill_v = (float*)malloc(value_size * sizeof(float)); 
 
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* var 
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
-          EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0, "normal", 10, 0.01, DT_UINT32));
+  auto var = new TestableEmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
+          EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0,
+              "normal", 10, 0.01, DT_UINT32));
 
   var->Init(value, 1);
 
@@ -615,8 +614,10 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt32) {
   }
 
   auto filter = var->GetFilter();
-  auto bloom_filter = static_cast<BloomFilter<int64, float, EmbeddingVar<int64, float>>*>(filter);
-  int32* counter = (int32*)bloom_filter->GetBloomCounter();//(int64 *)var->GetBloomCounter(); 
+  auto bloom_filter = static_cast<BloomFilter<int64, float,
+       EmbeddingVar<int64, float>>*>(filter);
+  //(int64 *)var->GetBloomCounter(); 
+  int32* counter = (int32*)bloom_filter->GetBloomCounter();
 
   for (auto it: hash_val1) {
     ASSERT_EQ(counter[it], tab[it]);
@@ -639,12 +640,12 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt16) {
   float* fill_v = (float*)malloc(value_size * sizeof(float)); 
 
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* var 
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
-          EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0, "normal_contiguous", 10, 0.01, DT_UINT16));
+  auto var = new TestableEmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
+      EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0,
+        "normal_contiguous", 10, 0.01, DT_UINT16));
 
   var->Init(value, 1);
 
@@ -687,8 +688,10 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt16) {
 
   //int16* counter = (int16 *)var->GetBloomCounter(); 
   auto filter = var->GetFilter();
-  auto bloom_filter = static_cast<BloomFilter<int64, float, EmbeddingVar<int64, float>>*>(filter);
-  int16* counter = (int16*)bloom_filter->GetBloomCounter();//(int64 *)var->GetBloomCounter(); 
+  auto bloom_filter = static_cast<BloomFilter<int64, float,
+       EmbeddingVar<int64, float>>*>(filter);
+  //(int64 *)var->GetBloomCounter(); 
+  int16* counter = (int16*)bloom_filter->GetBloomCounter();
 
   for (auto it: hash_val1) {
     ASSERT_EQ(counter[it], tab[it]);
@@ -711,12 +714,12 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt8) {
   float* fill_v = (float*)malloc(value_size * sizeof(float)); 
 
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* var 
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
-          EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0, "normal_contiguous", 10, 0.01, DT_UINT8));
+  auto var = new TestableEmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
+      EmbeddingConfig(0, 0, 1, 1, "", 5, 3, 99999, -1.0,
+        "normal_contiguous", 10, 0.01, DT_UINT8));
 
   var->Init(value, 1);
 
@@ -758,8 +761,10 @@ TEST(EmbeddingVariableTest, TestBloomCounterInt8) {
   }
 
   auto filter = var->GetFilter();
-  auto bloom_filter = static_cast<BloomFilter<int64, float, EmbeddingVar<int64, float>>*>(filter);
-  int8* counter = (int8*)bloom_filter->GetBloomCounter();//(int64 *)var->GetBloomCounter(); 
+  auto bloom_filter = static_cast<BloomFilter<int64, float,
+       EmbeddingVar<int64, float>>*>(filter);
+  int8* counter = (int8*)bloom_filter->GetBloomCounter();
+  //(int64 *)var->GetBloomCounter(); 
   //int8* counter = (int8 *)var->GetBloomCounter(); 
 
   for (auto it: hash_val1) {
@@ -782,11 +787,10 @@ TEST(EmbeddingVariableTest, TestInsertAndLookup) {
   test::FillValues<int64>(&value, std::vector<int64>(value_size, 10));
  // float* fill_v = (int64*)malloc(value_size * sizeof(int64));
   auto storage_manager = new embedding::StorageManager<int64, int64>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, int64>* variable
-    = new EmbeddingVar<int64, int64>("EmbeddingVar",
-       storage_manager/*, EmbeddingConfig(0, 0, 1, 0, "")*/);
+  auto variable = new EmbeddingVar<int64, int64>("EmbeddingVar",
+      storage_manager/*, EmbeddingConfig(0, 0, 1, 0, "")*/);
 
   variable->Init(value, 1);
 
@@ -817,12 +821,13 @@ TEST(EmbeddingVariableTest, TestInsertAndLookup) {
   free(flag);
   std::vector<std::thread> insert_threads(THREADNUM);
   for (size_t i = 0 ; i < THREADNUM; i++) {
-    insert_threads[i] = std::thread(InsertAndLookup, variable, &keys[i*InsertLoops/THREADNUM], InsertLoops/THREADNUM, value_size);
+    insert_threads[i] = std::thread(InsertAndLookup,
+        variable, &keys[i*InsertLoops/THREADNUM],
+        InsertLoops/THREADNUM, value_size);
   }
   for (auto &t : insert_threads) {
     t.join();
   }
-
 }
 
 void MultiFilter(EmbeddingVar<int64, float>* variable, int value_size) {
@@ -836,12 +841,11 @@ TEST(EmbeddingVariableTest, TestFeatureFilterParallel) {
   test::FillValues<float>(&value, std::vector<float>(value_size, 10.0));
   float* fill_v = (float*)malloc(value_size * sizeof(float)); 
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* var 
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
-          EmbeddingConfig(0, 0, 1, 1, "", 5, 7));
+  auto var = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
+      EmbeddingConfig(0, 0, 1, 1, "", 5, 7));
 
   var->Init(value, 1);
   float *val = (float *)malloc((value_size+1)*sizeof(float));
@@ -859,23 +863,23 @@ TEST(EmbeddingVariableTest, TestFeatureFilterParallel) {
   ASSERT_EQ(value_ptr->GetFreq(), thread_num);
 }
 
-
 EmbeddingVar<int64, float>* InitEV_Lockless(int64 value_size) {
   Tensor value(DT_INT64, TensorShape({value_size}));
   test::FillValues<int64>(&value, std::vector<int64>(value_size, 10));
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* variable
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager);
+  auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager);
 
   variable->Init(value, 1);
   return variable;
 }
 
-void MultiLookup(EmbeddingVar<int64, float>* variable, int64 InsertLoop, int thread_num, int i) {
-  for (int64 j = i * InsertLoop/thread_num; j < (i+1)*InsertLoop/thread_num; j++) {
+void MultiLookup(EmbeddingVar<int64, float>* variable,
+    int64 InsertLoop, int thread_num, int i) {
+  for (int64 j = i * InsertLoop/thread_num;
+      j < (i+1)*InsertLoop/thread_num; j++) {
     ValuePtr<float>* value_ptr = nullptr;
     variable->LookupOrCreateKey(j, &value_ptr);
   }
@@ -886,7 +890,7 @@ void BM_MULTIREAD_LOCKLESS(int iters, int thread_num) {
   testing::UseRealTime();
 
   int64 value_size = 128;
-  EmbeddingVar<int64, float>* variable = InitEV_Lockless(value_size);
+  auto variable = InitEV_Lockless(value_size);
   int64 InsertLoop =  1000000;
 
   float* fill_v = (float*)malloc(value_size * sizeof(float));
@@ -901,7 +905,8 @@ void BM_MULTIREAD_LOCKLESS(int iters, int thread_num) {
   while(iters--){
     std::vector<std::thread> insert_threads(thread_num);
     for (size_t i = 0 ; i < thread_num; i++) {
-      insert_threads[i] = std::thread(MultiLookup, variable, InsertLoop, thread_num, i);
+      insert_threads[i] = std::thread(MultiLookup,
+          variable, InsertLoop, thread_num, i);
     }
     for (auto &t : insert_threads) {
       t.join();
@@ -910,9 +915,12 @@ void BM_MULTIREAD_LOCKLESS(int iters, int thread_num) {
 
 }
 
-void hybrid_process(EmbeddingVar<int64, float>* variable, int64* keys, int64 InsertLoop, int thread_num, int64 i, int64 value_size) {
+void hybrid_process(EmbeddingVar<int64, float>* variable,
+    int64* keys, int64 InsertLoop, int thread_num,
+    int64 i, int64 value_size) {
   float *val = (float *)malloc(sizeof(float)*(value_size + 1));
-  for (int64 j = i * InsertLoop/thread_num; j < (i+1) * InsertLoop/thread_num; j++) {
+  for (int64 j = i * InsertLoop/thread_num;
+      j < (i+1) * InsertLoop/thread_num; j++) {
     variable->LookupOrCreate(keys[j], val, nullptr);
   }
 }
@@ -922,7 +930,7 @@ void BM_HYBRID_LOCKLESS(int iters, int thread_num) {
   testing::UseRealTime();
 
   int64 value_size = 128;
-  EmbeddingVar<int64, float>* variable = InitEV_Lockless(value_size);
+  auto variable = InitEV_Lockless(value_size);
   int64 InsertLoop =  1000000;
 
   srand((unsigned)time(NULL));
@@ -936,7 +944,8 @@ void BM_HYBRID_LOCKLESS(int iters, int thread_num) {
   while (iters--) {
     std::vector<std::thread> insert_threads(thread_num);
     for (size_t i = 0 ; i < thread_num; i++) {
-      insert_threads[i] = std::thread(hybrid_process, variable, keys, InsertLoop, thread_num, i, value_size);
+      insert_threads[i] = std::thread(hybrid_process,
+          variable, keys, InsertLoop, thread_num, i, value_size);
     }
     for (auto &t : insert_threads) {
       t.join();
@@ -965,7 +974,8 @@ TEST(EmbeddingVariableTest, TestAllocate) {
   double t1 = 0;
   LOG(INFO) << "memory t0: " << t0;
   for (int64 i = 0; i < 1000; ++i) {
-    float* tensor_val = TypedAllocator::Allocate<float>(ev_allocator(), value_len, AllocationAttributes());
+    float* tensor_val = TypedAllocator::Allocate<float>(
+        ev_allocator(), value_len, AllocationAttributes());
     t1 = getResident()*getpagesize()/1024.0/1024.0;
     memset(tensor_val, 0, sizeof(float) * value_len);
   }
@@ -981,11 +991,10 @@ TEST(EmbeddingVariableTest, TestEVStorageType_DRAM) {
   test::FillValues<float>(&value, std::vector<float>(value_size, 9.0));
   float* fill_v = (float*)malloc(value_size * sizeof(float));
   auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig());
+      "EmbeddingVar", embedding::StorageConfig());
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* variable
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
+  auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
           EmbeddingConfig(/*emb_index = */0, /*primary_emb_index = */0,
                           /*block_num = */1, /*slot_num = */1,
                           /*name = */"", /*steps_to_live = */0,
@@ -1010,7 +1019,6 @@ void t1(KVInterface<int64, float>* hashmap) {
 }
 
 TEST(EmbeddingVariableTest, TestRemoveLockless) {
-
   KVInterface<int64, float>* hashmap = new LocklessHashMap<int64, float>();
   ASSERT_EQ(hashmap->Size(), 0);
   LOG(INFO) << "hashmap size: " << hashmap->Size();
@@ -1031,12 +1039,13 @@ TEST(EmbeddingVariableTest, TestBatchCommitofDBKV) {
   float* fill_v = (float*)malloc(value_size * sizeof(float));
   std::vector<int64> size;
   size.emplace_back(1000);
-  auto storage_manager = new embedding::StorageManager<int64, float>(
-                 "EmbeddingVar", embedding::StorageConfig(embedding::LEVELDB, testing::TmpDir(), size, "normal_contiguous"));
+  auto storage_manager =
+    new embedding::StorageManager<int64, float>(
+        "EmbeddingVar", embedding::StorageConfig(
+          embedding::LEVELDB, testing::TmpDir(), size, "normal_contiguous"));
   TF_CHECK_OK(storage_manager->Init());
-  EmbeddingVar<int64, float>* variable
-    = new EmbeddingVar<int64, float>("EmbeddingVar",
-        storage_manager,
+  auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
           EmbeddingConfig(/*emb_index = */0, /*primary_emb_index = */0,
                           /*block_num = */1, /*slot_num = */0,
                           /*name = */"", /*steps_to_live = */0,
@@ -1050,7 +1059,8 @@ TEST(EmbeddingVariableTest, TestBatchCommitofDBKV) {
 
   for(int64 i = 0; i < 6; i++) {
     key_list.emplace_back(i);
-    ValuePtr<float>* tmp = new NormalContiguousValuePtr<float>(ev_allocator(), 4);
+    ValuePtr<float>* tmp =
+      new NormalContiguousValuePtr<float>(ev_allocator(), 4);
     value_ptr_list.emplace_back(tmp);
   }
 
@@ -1064,14 +1074,16 @@ TEST(EmbeddingVariableTest, TestBatchCommitofDBKV) {
 
 void InsertAndCommit(KVInterface<int64, float>* hashmap) {
   for (int64 i = 0; i< 100; ++i) {
-    const ValuePtr<float>* tmp= new NormalContiguousValuePtr<float>(ev_allocator(), 100);
+    const ValuePtr<float>* tmp =
+      new NormalContiguousValuePtr<float>(ev_allocator(), 100);
     hashmap->Insert(i, tmp);
     hashmap->Commit(i, tmp);
   }
 }
 
 TEST(EmbeddingVariableTest, TestSizeDBKV) {
-  KVInterface<int64, float>* hashmap = new LevelDBKV<int64, float>(testing::TmpDir());
+  KVInterface<int64, float>* hashmap =
+    new LevelDBKV<int64, float>(testing::TmpDir());
   hashmap->SetTotalDims(100);
   ASSERT_EQ(hashmap->Size(), 0);
   LOG(INFO) << "hashmap size: " << hashmap->Size();
@@ -1088,12 +1100,12 @@ TEST(EmbeddingVariableTest, TestSizeDBKV) {
 TEST(EmbeddingVariableTest, TestSSDIterator) {
   std::string temp_dir = testing::TmpDir();
   Allocator* alloc = ev_allocator();
-  KVInterface<int64, float>* hashmap = new SSDHashKV<int64, float>(temp_dir, alloc);
+  auto hashmap = new SSDHashKV<int64, float>(temp_dir, alloc);
   hashmap->SetTotalDims(126);
   ASSERT_EQ(hashmap->Size(), 0);
   std::vector<ValuePtr<float>*> value_ptrs;
   for (int64 i = 0; i < 10; ++i) {
-    ValuePtr<float>* tmp= new NormalContiguousValuePtr<float>(alloc, 126);
+    auto tmp = new NormalContiguousValuePtr<float>(alloc, 126);
     tmp->SetValue((float)i, 126);
     value_ptrs.emplace_back(tmp);
   }
@@ -1115,12 +1127,13 @@ TEST(EmbeddingVariableTest, TestSSDIterator) {
 }
 
 TEST(EmbeddingVariableTest, TestLevelDBIterator) {
-  KVInterface<int64, float>* hashmap = new LevelDBKV<int64, float>(testing::TmpDir());
+  auto hashmap = new LevelDBKV<int64, float>(testing::TmpDir());
   hashmap->SetTotalDims(126);
   ASSERT_EQ(hashmap->Size(), 0);
   std::vector<ValuePtr<float>*> value_ptrs;
   for (int64 i = 0; i < 10; ++i) {
-    ValuePtr<float>* tmp= new NormalContiguousValuePtr<float>(ev_allocator(), 126);
+    ValuePtr<float>* tmp =
+      new NormalContiguousValuePtr<float>(ev_allocator(), 126);
     tmp->SetValue((float)i, 126);
     value_ptrs.emplace_back(tmp);
   }
@@ -1179,6 +1192,45 @@ TEST(EmbeddingVariableTest, TestLFUCache) {
   }
 }
 
+TEST(EmbeddingVariableTest, TestCacheRestore) {
+  int64 value_size = 4;
+  Tensor value(DT_FLOAT, TensorShape({value_size}));
+  test::FillValues<float>(&value, std::vector<float>(value_size, 9.0));
+  float* fill_v = (float*)malloc(value_size * sizeof(float));
+  std::vector<int64> size;
+  size.emplace_back(64);
+  auto storage_manager = new embedding::StorageManager<int64, float>(
+      "EmbeddingVar",
+      embedding::StorageConfig(embedding::DRAM_SSDHASH,
+                               testing::TmpDir(),
+                               size, "normal_contiguous"));
+  TF_CHECK_OK(storage_manager->Init());
+  auto variable = new EmbeddingVar<int64, float>("EmbeddingVar",
+      storage_manager,
+          EmbeddingConfig(/*emb_index = */0, /*primary_emb_index = */0,
+                          /*block_num = */1, /*slot_num = */0,
+                          /*name = */"", /*steps_to_live = */0,
+                          /*filter_freq = */0, /*max_freq = */999999,
+                          /*l2_weight_threshold = */-1.0, /*layout = */"normal_contiguous",
+                          /*max_element_size = */0, /*false_positive_probability = */-1.0,
+                          /*counter_type = */DT_UINT64));
+  variable->Init(value, 1);
+  variable->InitStorageCacheStrategy(CacheStrategy::LFU);
+  RestoreBuffer buf;
+  buf.key_buffer = new char[6 * sizeof(int64)];
+  buf.version_buffer = new char[6 * sizeof(int64)];
+  buf.freq_buffer = new char[6 * sizeof(int64)];
+  buf.value_buffer = new char[24 * sizeof(float)];
+  for (int i = 1; i < 7; i++) {
+    ((int64*)buf.key_buffer)[i-1] = i;
+    ((int64*)buf.version_buffer)[i-1] = 1;
+    ((int64*)buf.freq_buffer)[i-1] = i * 10;
+  }
+  variable->Import(buf, 6, 1, 0, 1, false);
+  ASSERT_EQ(variable->storage_manager()->Size(0), 4);
+  ASSERT_EQ(variable->storage_manager()->Size(1), 2);
+}
+
 void t1_gpu(KVInterface<int64, float>* hashmap) {
   for (int i = 0; i< 100; ++i) {
     hashmap->Insert(i, new NormalGPUValuePtr<float>(ev_allocator(), 100));
@@ -1188,7 +1240,8 @@ void t1_gpu(KVInterface<int64, float>* hashmap) {
 #if GOOGLE_CUDA
 #if !TENSORFLOW_USE_GPU_EV
 TEST(EmbeddingVariableTest,TestRemoveLocklessCPU) {
-    KVInterface<int64, float>* hashmap = new LocklessHashMapCPU<int64, float>();
+    KVInterface<int64, float>* hashmap =
+      new LocklessHashMapCPU<int64, float>();
     ASSERT_EQ(hashmap->Size(), 0);
     LOG(INFO) << "hashmap size: " << hashmap->Size();
     auto t = std::thread(t1, hashmap);
@@ -1202,7 +1255,6 @@ TEST(EmbeddingVariableTest,TestRemoveLocklessCPU) {
 }
 #endif  // TENSORFLOW_USE_GPU_EV
 #endif  // GOOGLE_CUDA
-
 
 /*void CommitGPU(KVInterface<int64, float>* hashmap) {
   for (int64 i = 0; i< 100; ++i) {
@@ -1320,10 +1372,14 @@ void malloc_use_allocator(Allocator* allocator){
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (int i = 0; i < malloc_size; ++i) {
     int ev_list_size = 32;
-    float* ptr_ = (float *)allocator->AllocateRaw(0, sizeof(float) * ev_list_size);
+    float* ptr_ = (float *)allocator->AllocateRaw(
+        0, sizeof(float) * ev_list_size);
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  LOG(INFO) << "cost time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+  LOG(INFO) << "cost time: "
+            << ((double)(end.tv_sec - start.tv_sec) *
+                1000000000 + end.tv_nsec - start.tv_nsec) / 1000000
+            << "ms";
 }
 
 TEST(EmbeddingVariableTest, TestEVMalloc) {
@@ -1349,7 +1405,8 @@ TEST(EmbeddingVariableTest, TestCPUMalloc) {
 #if GOOGLE_CUDA
 TEST(EmbeddingVariableTest, TestGPUMalloc) {
   SessionOptions sops;
-  std::unique_ptr<Device> device = DeviceFactory::NewDevice(DEVICE_GPU, sops, "/job:a/replica:0/task:0");
+  std::unique_ptr<Device> device =
+    DeviceFactory::NewDevice(DEVICE_GPU, sops, "/job:a/replica:0/task:0");
   Allocator* gpu_allocator = GPUProcessState::singleton()->GetGPUAllocator(
         GPUOptions(), TfGpuId(0), 1 << 26);
 
@@ -1362,12 +1419,12 @@ TEST(EmbeddingVariableTest, TestGPUMalloc) {
   }
 }
 
-
 TEST(EmbeddingVariableTest, TestCPUGPUMalloc) {
   SessionOptions sops;
-  std::unique_ptr<Device> device = DeviceFactory::NewDevice(DEVICE_GPU, sops, "/job:a/replica:0/task:0");
+  std::unique_ptr<Device> device =
+    DeviceFactory::NewDevice(DEVICE_GPU, sops, "/job:a/replica:0/task:0");
 
-  Allocator* gpu_allocator = GPUProcessState::singleton()->GetGPUAllocator(
+  auto gpu_allocator = GPUProcessState::singleton()->GetGPUAllocator(
         GPUOptions(), TfGpuId(0), 1 << 26);
 
   timespec start;
@@ -1378,28 +1435,38 @@ TEST(EmbeddingVariableTest, TestCPUGPUMalloc) {
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (int i = 0; i < 1024 * 2; ++i) {
     int ev_list_size = 32;
-    ValuePtr<float>* ptr_ = new NormalGPUValuePtr<float>(gpu_allocator, ev_list_size);
+    ValuePtr<float>* ptr_ =
+      new NormalGPUValuePtr<float>(gpu_allocator, ev_list_size);
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  LOG(INFO) << "cost time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
-
+  LOG(INFO) << "cost time: "
+            << ((double)(end.tv_sec - start.tv_sec) *
+                1000000000 + end.tv_nsec - start.tv_nsec) / 1000000
+            << "ms";
 
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (int i = 0; i < 1024 * 2; ++i) {
     int ev_list_size = 32;
-    ValuePtr<float>* ptr_ = new NormalValuePtr<float>(cpu_allocator(), ev_list_size);
+    ValuePtr<float>* ptr_ =
+      new NormalValuePtr<float>(cpu_allocator(), ev_list_size);
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  LOG(INFO) << "cost time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
-
+  LOG(INFO) << "cost time: "
+            << ((double)(end.tv_sec - start.tv_sec) *
+                1000000000 + end.tv_nsec - start.tv_nsec) / 1000000
+            << "ms";
 
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (int i = 0; i < 1; ++i) {
     int ev_list_size = 32 * 1024 * 2;
-    ValuePtr<float>* ptr_ = new NormalGPUValuePtr<float>(gpu_allocator, ev_list_size);
+    ValuePtr<float>* ptr_ =
+      new NormalGPUValuePtr<float>(gpu_allocator, ev_list_size);
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  LOG(INFO) << "cost time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+  LOG(INFO) << "cost time: "
+            << ((double)(end.tv_sec - start.tv_sec) *
+                1000000000 + end.tv_nsec - start.tv_nsec) / 1000000
+            << "ms";
 }
 #endif //GOOGLE_CUDA
 
@@ -1412,42 +1479,56 @@ void malloc_free_use_allocator(Allocator* allocator){
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (int i = 0; i < malloc_size; ++i) {
     int ev_list_size = 32;
-    float* ptr_ = (float *)allocator->AllocateRaw(0, sizeof(float) * ev_list_size);
+    float* ptr_ = (float *)allocator->AllocateRaw(
+        0, sizeof(float) * ev_list_size);
     ptrs.push_back(ptr_);
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  LOG(INFO) << "first time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+  LOG(INFO) << "first time: "
+            << ((double)(end.tv_sec - start.tv_sec) *
+                1000000000 + end.tv_nsec - start.tv_nsec) / 1000000
+            << "ms";
 
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (auto iter = ptrs.begin();iter != ptrs.end();iter++) {
     allocator->DeallocateRaw(*iter);
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  LOG(INFO) << "free time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+  LOG(INFO) << "free time: "
+            << ((double)(end.tv_sec - start.tv_sec) *
+                1000000000 + end.tv_nsec - start.tv_nsec) / 1000000
+            << "ms";
 
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (int i = 0; i < malloc_size; ++i) {
     int ev_list_size = 32;
-    float* ptr_ = (float *)allocator->AllocateRaw(0, sizeof(float) * ev_list_size);
+    float* ptr_ = (float *)allocator->AllocateRaw(
+        0, sizeof(float) * ev_list_size);
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  LOG(INFO) << "second time: " << ((double)(end.tv_sec - start.tv_sec)*1000000000 + end.tv_nsec - start.tv_nsec)/1000000 << "ms";
+  LOG(INFO) << "second time: "
+            << ((double)(end.tv_sec - start.tv_sec) *
+                1000000000 + end.tv_nsec - start.tv_nsec) / 1000000
+            << "ms";
 }
 
 TEST(EmbeddingVariableTest, TestEVMallocFree) {
   std::thread th_arr[th_num];
   for (unsigned int i = 0; i < th_num; ++i) {
-    th_arr[i] = std::thread(malloc_free_use_allocator, ev_allocator());
+    th_arr[i] = std::thread(
+        malloc_free_use_allocator, ev_allocator());
   }
   for (unsigned int i = 0; i < th_num; ++i) {
     th_arr[i].join();
   }
 }
 
-void SingleCommit(KVInterface<int64, float>* hashmap, std::vector<int64> keys, int bias) {
+void SingleCommit(KVInterface<int64, float>* hashmap,
+    std::vector<int64> keys, int bias) {
   std::vector<ValuePtr<float>*> value_ptrs;
   for (int64 i = 0; i < keys.size(); ++i) {
-    ValuePtr<float>* tmp= new NormalContiguousValuePtr<float>(cpu_allocator(), 124);
+    ValuePtr<float>* tmp =
+      new NormalContiguousValuePtr<float>(cpu_allocator(), 124);
     tmp->SetValue(float(keys[i] + bias), 124);
     value_ptrs.push_back(tmp);
   }
@@ -1459,12 +1540,12 @@ void SingleCommit(KVInterface<int64, float>* hashmap, std::vector<int64> keys, i
   }
   uint64 end = Env::Default()->NowNanos();
   uint64 result_cost = end - start;
-  //LOG(INFO) << "SingleCommit time: " << result_cost << " ns";
 }
 
 TEST(KVInterfaceTest, TestSSDKVCompaction) {
   std::string temp_dir = testing::TmpDir();
-  KVInterface<int64, float>* hashmap = new SSDHashKV<int64, float>(temp_dir, cpu_allocator());
+  auto hashmap = new SSDHashKV<int64, float>(
+      temp_dir, cpu_allocator());
   hashmap->SetTotalDims(124);
   ASSERT_EQ(hashmap->Size(), 0);
   std::vector<int64> ids;
@@ -1514,9 +1595,6 @@ TEST(KVInterfaceTest, TestSSDKVCompaction) {
     }
   }
 }
-
-
-
 
 } // namespace
 } // namespace embedding
