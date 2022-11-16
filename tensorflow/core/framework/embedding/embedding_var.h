@@ -515,7 +515,7 @@ class EmbeddingVar : public ResourceBase {
   }
 
   void DecreaseCacheCapacity(){
-    int64 new_cache_capacity = (int64)(storage_manager_->CacheSize() * 0.95);
+    int64 new_cache_capacity = (int64)(storage_manager_->CacheSize() * 0.98);
     LOG(INFO) << new_cache_capacity;
     storage_manager_->SetCacheSize(new_cache_capacity);
   }

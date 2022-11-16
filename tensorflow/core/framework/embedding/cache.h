@@ -98,23 +98,6 @@ class LRUCache : public BatchCache<K> {
       K id = batch_ids[i];
       typename std::map<K, LRUNode *>::iterator it = mp.find(id);
       if (it != mp.end()) {
-        /*
-        try{
-          LRUNode *node = it->second;
-          if(node == nullptr){
-            throw "aaa";
-          }
-          node->pre->next = node->next;
-          node->next->pre = node->pre;
-          head->next->pre = node;
-          node->next = head->next;
-          head->next = node;
-          node->pre = head;
-          BatchCache<K>::num_hit++;
-        }
-        catch(...){
-          LOG(INFO) << "Find Error";
-        }*/
         LRUNode *node = it->second;
         node->pre->next = node->next;
         node->next->pre = node->pre;
@@ -124,23 +107,6 @@ class LRUCache : public BatchCache<K> {
         node->pre = head;
         BatchCache<K>::num_hit++;
       } else {
-        /*
-        try{
-          LRUNode *newNode = new LRUNode(id);
-          if(newNode == nullptr){
-            throw "bbb";
-          }
-          head->next->pre = newNode;
-          newNode->next = head->next;
-          head->next = newNode;
-          newNode->pre = head;
-          mp[id] = newNode;
-          BatchCache<K>::num_miss++;
-        }
-        catch(...){
-          LOG(INFO) << "Not find Error";
-        }
-        */
         LRUNode *newNode = new LRUNode(id);
         head->next->pre = newNode;
         newNode->next = head->next;

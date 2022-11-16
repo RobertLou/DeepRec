@@ -2388,7 +2388,6 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
         sess.run([init])
         for i in xrange(1):
           for j in range(0,len(batch_list)):
-            print(j)
             sess.run([emb], feed_dict={'ids:0': batch_list[j]}) 
 
     with ops.Graph().as_default() as g, ops.device('/cpu:0'):
@@ -2400,10 +2399,10 @@ class EmbeddingVariableTest(test_util.TensorFlowTestCase):
             steps_to_live=5,
             ev_option = variables.EmbeddingVariableOption(storage_option=variables.StorageOption(storage_type=config_pb2.StorageType.DRAM_SSDHASH,
                                                                                                  storage_path="/tmp/ssd_utpy",
-                                                                                                 storage_size=[1 << 28])))
-      t1 = time.clock()
+                                                                                                 storage_size=[1 << 29])))
+      t1 = time.time()
       runTestAdagrad(self, emb_var, g)
-      t2 = time.clock()
+      t2 = time.time()
       print(t2 - t1)
 
 if __name__ == "__main__":

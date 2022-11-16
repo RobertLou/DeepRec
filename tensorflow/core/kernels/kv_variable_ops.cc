@@ -590,16 +590,17 @@ class KvResourceGatherOp : public OpKernel {
           embedding::BatchCache<TKey>* cache = ev->Cache();
           cache->reset_status();
           cache->add_to_rank(indices);     
-          LOG(INFO) << cache->DebugString();
-          LOG(INFO) << cache->size();
-          /*
+          //LOG(INFO) << cache->DebugString();
+          std::cout << cache->size() << std::endl;
+          //LOG(INFO) << ev->CacheSize();
+          
           if(cache->GetHitRate() > 90){
             ev->DecreaseCacheCapacity();
           }
-          if(cache->GetHitRate() < 85){
+          if(cache->GetHitRate() < 80){
             ev->IncreaseCacheCapacity();
           }
-          */
+          
         });
       }
     }
