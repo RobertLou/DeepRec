@@ -863,5 +863,46 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     with self.test_session() as sess:
       saver.restore(sess, model_path)
 
+  def testEmbeddingVariableForHBMandDRAMLookup(self):
+    print("testEmbeddingVariableForHBMandDRAMLookup")
+    def runTestAdamW(self, var, g):
+      ids = array_ops.placeholder(dtypes.int64, name="ids")
+      emb = embedding_ops.embedding_lookup(var, ids)
+      init = variables.global_variables_initializer()
+      with self.test_session(graph=g) as sess:
+        sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_VAR_OPS))
+        sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
+        sess.run([init])
+        sess.run([emb], {ids:[1,2,3]})
+        sess.run([emb], {ids:[1,2,4]})
+        sess.run([emb], {ids:[1,2,2]})
+        sess.run([emb], {ids:[1,2,5]})
+        r = sess.run(emb, {ids:[1,2,3,4,5,230,210]})
+        return r
+
+    with ops.Graph().as_default() as g, ops.device('/gpu:0'):
+      storage_option = variables.StorageOption(
+                        storage_type=config_pb2.StorageType.SET_ASSOCIATIVE_HBM_DRAM,
+                        storage_size=[1024 * 1024])
+      ev_option = variables.EmbeddingVariableOption(
+                                storage_option=storage_option)
+      emb_var = variable_scope.get_embedding_variable("var_1",
+            embedding_dim = 30,
+            initializer=init_ops.ones_initializer(dtypes.float32),
+            steps_to_live=5,
+            ev_option = ev_option)
+      emb1 = runTestAdamW(self, emb_var, g)
+      print(emb1)
+
+"""     with ops.Graph().as_default() as g:
+      var = variable_scope.get_variable("var_2",
+                shape=[100, 30],
+                initializer=init_ops.ones_initializer(dtypes.float32))
+      emb2 = runTestAdamW(self, var, g)
+    print(emb1)
+    for i in range(0, 5):
+      for j in range(0, 30):
+        self.assertAllCloseAccordingToType(emb1[i][j], emb2[i][j])       """
+
 if __name__ == "__main__":
   googletest.main()

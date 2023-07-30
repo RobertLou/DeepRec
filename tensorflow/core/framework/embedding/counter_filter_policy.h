@@ -75,6 +75,12 @@ class CounterFilterPolicy : public FilterPolicy<K, V, EV> {
         stream, event_mgr, ctx.gpu_device);
   }
 
+  void BatchLookup(const EmbeddingVarContext<GPUDevice>& ctx,
+                   const K* keys, V* output,
+                   int64 num_of_keys,
+                   V* default_value_ptr) override {
+  }
+
   void BatchLookupOrCreateKey(const EmbeddingVarContext<GPUDevice>& ctx,
                               const K* keys, ValuePtr<V>** value_ptrs_list,
                               int64 num_of_keys) override {

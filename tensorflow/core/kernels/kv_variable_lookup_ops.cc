@@ -401,7 +401,14 @@ class KvResourceGatherGPUOp : public OpKernel {
         } else {
 	        ev->GetEmbeddings(ev_ctx, key_base, out_base, N);
         }
-      } else {
+      } 
+      else if(ev->IsSetAssociativeHbm()){
+        const TKey* key_base = &indices_flat(0);
+        EmbeddingVarContext<GPUDevice> ev_ctx(c);
+        
+        ev->GetEmbeddings(ev_ctx, key_base, out_base, N);
+      } 
+      else {
         Tensor indices_host(indices.dtype(), indices.shape());
         //Copy ids from GPU to CPU for CPU Lookup.
         auto stream = c->op_device_context()->stream();

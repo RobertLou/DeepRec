@@ -218,5 +218,205 @@ __global__ void SparseApplyAdamWGPU(V** var, V** m, V** v,
 TF_CALL_float(REGISTER_KERNELS_ALL_INDEX)
 TF_CALL_double(REGISTER_KERNELS_ALL_INDEX)
 #undef REGISTER_KERNELS_ALL_INDEX
+
+template<class K, class V>
+__global__ void InitEmptyCache(char *cache, int key_size, int header_size, int alloc_size, int value_len, int limit) {
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  if(i < limit){
+    char *base_ptr = cache + alloc_size * i;
+    K *key_ptr = reinterpret_cast<K *>(base_ptr);
+    int *freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+    V *value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
+    *key_ptr = static_cast<K>(-1);
+    *freq_ptr = 0;
+    
+    for (int j = 0; j < value_len; j++){
+      value_ptr[j] = static_cast<V>(j);
+    }
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
+   template __global__ void InitEmptyCache<T1, T2>(char *, int, int, int, int, int);
+
+#define REGISTER_KERNELS_ALL_TYPES(T2) \
+   REGISTER_KERNELS_ALL_INDEX(int32, T2) \
+   REGISTER_KERNELS_ALL_INDEX(int64, T2)
+
+
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
+
+
+#undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
+
+template<class K, class V>
+__global__ void DeviceInitEmbedding(int *locks, K *keys, char *cache, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+  if(i < limit){
+    K key = keys[i];
+    int cache_id = key % cache_num;
+    int possible_place = cache_id * ways;
+    bool blocked = true;
+    while(blocked) {
+      if(0 == atomicCAS(&locks[cache_id], 0, 1)) {
+        for(int j = possible_place; j < possible_place + ways; j++){
+          char *base_ptr = cache + alloc_size * j;
+          K *key_ptr = reinterpret_cast<K *>(base_ptr);
+          int *freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+          V *value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
+          if(*key_ptr == -1){
+            *key_ptr = key;
+            for(int k = 0; k < value_len; k++){
+              value_ptr[k] = static_cast<V>(key);
+            }
+            *freq_ptr = 0;
+            break;
+          }
+        }
+        atomicExch(&locks[cache_id], 0);
+        blocked = false;
+      }
+    }
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
+   template __global__ void DeviceInitEmbedding<T1, T2>(int *, T1 *, char *, int, int, int, int, int, int, int);
+
+#define REGISTER_KERNELS_ALL_TYPES(T2) \
+   REGISTER_KERNELS_ALL_INDEX(int32, T2) \
+   REGISTER_KERNELS_ALL_INDEX(int64, T2)
+
+
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
+
+
+#undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
+
+template<class K, class V>
+__global__ void GatherEmbedding(K* keys, char *cache, V *output, int *miss_count, K *gather_status, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+  int j;
+  if (i == 0){
+    *miss_count = 0;
+  }
+  if(i < limit){
+    K key = keys[i];
+    int cache_id = key % cache_num;
+    int possible_place = cache_id * ways;
+    gather_status[i] = key;
+    for(j = possible_place; j < possible_place + ways; j++){
+      char *base_ptr = cache + alloc_size * j;
+      K *key_ptr = reinterpret_cast<K *>(base_ptr);
+      int *freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+      V *value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
+
+      if(*key_ptr == key){
+        gather_status[i] = 0;
+        for(int k = 0; k < value_len; k++){
+          output[i * value_len + k] = value_ptr[k];
+        }
+        atomicAdd(freq_ptr, 1);
+        break;
+      }
+      
+    }
+    if(j == possible_place + ways){
+      atomicAdd(miss_count, 1);
+    }
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
+   template __global__ void GatherEmbedding<T1, T2>(T1 *, char *, T2 *, int *, T1 *, int, int, int, int, int, int, int);
+
+#define REGISTER_KERNELS_ALL_TYPES(T2) \
+   REGISTER_KERNELS_ALL_INDEX(int32, T2) \
+   REGISTER_KERNELS_ALL_INDEX(int64, T2)
+
+
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
+
+
+#undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
+
+template<class K, class V>
+__global__ void GatherMissingEmbedding(int *locks, K* keys, char *cache, V *output, int *miss_index, V* memcpy_buffer, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int miss_count){
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+  if(i < miss_count){
+    int index = miss_index[i];
+    K key = keys[index];
+    int cache_id = key % cache_num;
+    int possible_place = cache_id * ways;
+    
+    //Write to output
+    for(int j = 0; j < value_len; j++){
+      output[index * value_len + j] = memcpy_buffer[i * value_len + j];
+    }
+
+    //Update Cache
+    bool blocked = true;
+    int minFreq = 99999;
+    int minPlace = -1;
+    while(blocked) {
+      if(0 == atomicCAS(&locks[cache_id], 0, 1)) {
+        //Find minimum frequency as substitution place
+        char *base_ptr;
+        int *freq_ptr;
+        K *key_ptr;
+        V *value_ptr;
+        for(int j = possible_place; j < possible_place + ways; j++){
+          base_ptr = cache + alloc_size * j;
+          freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+          if(*freq_ptr < minFreq){
+            minFreq = *freq_ptr;
+            minPlace = j;
+          }
+        }
+
+        base_ptr = cache + alloc_size * minPlace;
+        key_ptr = reinterpret_cast<K *>(base_ptr);
+        freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+        value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
+
+        //substitute
+        *key_ptr = key;
+        *freq_ptr = 0;
+        for(int j = 0; j < value_len; j++){
+          value_ptr[j] = memcpy_buffer[i * value_len + j];
+        }
+        atomicExch(&locks[cache_id], 0);
+        blocked = false;
+      }
+    }
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
+   template __global__ void GatherMissingEmbedding<T1, T2>(int *, T1 *, char *, T2 *, int *, T2 *, int, int, int, int, int, int, int);
+
+#define REGISTER_KERNELS_ALL_TYPES(T2) \
+   REGISTER_KERNELS_ALL_INDEX(int32, T2) \
+   REGISTER_KERNELS_ALL_INDEX(int64, T2)
+
+
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
+
+#undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
+
+
 }  // namespace tensorflow
 #endif  // GOOGLE_CUDA

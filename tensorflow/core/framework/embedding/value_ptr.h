@@ -642,6 +642,13 @@ class CompactValuePtr : public ValuePtr<V> {
   std::atomic_flag flag_ = ATOMIC_FLAG_INIT;
 };
 
+template <class K>
+struct FixedLengthGPUHeader{
+  K key;
+  int global_step;
+  int freq_counter;
+};
+
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_FRAMEWORK_EMBEDDING_VALUE_PTR_H_

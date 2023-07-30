@@ -222,6 +222,7 @@ class InitializeKvVariableOp : public OpKernel {
     bool if_op_on_gpu = (device_type_str == "GPU");
     bool if_embedding_on_hbm = (storage_type_ == embedding::HBM ||
                                 storage_type_ == embedding::HBM_DRAM ||
+                                storage_type_ == embedding::SET_ASSOCIATIVE_HBM_DRAM ||
                                 storage_type_ == embedding::HBM_DRAM_SSDHASH);
     OP_REQUIRES(c, if_op_on_gpu == if_embedding_on_hbm,
         errors::InvalidArgument("Storage of EV and device of Op mismatch."));
@@ -244,6 +245,7 @@ class InitializeKvVariableOp : public OpKernel {
         layout_ = "normal";
       } else {
         if (storage_type == embedding::HBM_DRAM ||
+            storage_type_ == embedding::SET_ASSOCIATIVE_HBM_DRAM ||
             storage_type == embedding::HBM_DRAM_SSDHASH) {
           layout_ = "normal_contiguous_gpu";
         } else {

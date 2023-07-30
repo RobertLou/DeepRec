@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ======================================================================*/
-#ifndef TENSORFLOW_CORE_FRAMEWORK_EMBEDDING_HBM_DRAM_STORAGE_H_
-#define TENSORFLOW_CORE_FRAMEWORK_EMBEDDING_HBM_DRAM_STORAGE_H_
+#ifndef TENSORFLOW_CORE_FRAMEWORK_EMBEDDING_SET_ASSOCIATIVE_HBM_DRAM_STORAGE_H_
+#define TENSORFLOW_CORE_FRAMEWORK_EMBEDDING_SET_ASSOCIATIVE_HBM_DRAM_STORAGE_H_
 
 #if GOOGLE_CUDA
 #define EIGEN_USE_GPU
@@ -35,205 +35,136 @@ void SyncWithEventMgr(se::Stream* stream, EventMgr* event_mgr);
 
 namespace embedding {
 template<typename K, typename V>
-class HbmDramStorage : public MultiTierStorage<K, V> {
+class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
  public:
-  HbmDramStorage(const StorageConfig& sc, Allocator* gpu_alloc,
+  SetAssociativeHbmDramStorage(const StorageConfig& sc, Allocator* gpu_alloc,
       Allocator* cpu_alloc, LayoutCreator<V>* lc, const std::string& name)
       : gpu_alloc_(gpu_alloc),
         MultiTierStorage<K, V>(sc, name) {
-    hbm_ = new HbmStorageWithCpuKv<K, V>(sc, gpu_alloc, lc);
+    hbm_ = new SetAssociativeHbmStorage<K, V>(sc, gpu_alloc, lc);
     dram_ = new DramStorage<K, V>(sc, cpu_alloc, lc,
         new LocklessHashMapCPU<K, V>(gpu_alloc));
   }
 
-  ~HbmDramStorage() override {
-    MultiTierStorage<K, V>::DeleteFromEvictionManager();
+  ~SetAssociativeHbmDramStorage() override {
     delete hbm_;
     delete dram_;
   }
 
-  TF_DISALLOW_COPY_AND_ASSIGN(HbmDramStorage);
+  TF_DISALLOW_COPY_AND_ASSIGN(SetAssociativeHbmDramStorage);
+
+  void InitSetAssociativeHbmDramStorage() override {
+    hbm_->Init(gpu_alloc_, Storage<K, V>::alloc_len_);
+  
+    V* default_value;
+    default_value = (V *)malloc(sizeof(V) * Storage<K, V>::alloc_len_);
+    for(int i = 0; i < Storage<K, V>::alloc_len_; i++){
+      default_value[i] = static_cast<V>(i); 
+    }
+
+    for(int i = 0; i < 256; i++){
+      ValuePtr<V> *tmp_value_ptr = new NormalContiguousValuePtr<V>(ev_allocator(), Storage<K, V>::alloc_len_);
+      tmp_value_ptr->GetOrAllocate(ev_allocator(), Storage<K, V>::alloc_len_, default_value, 0, 0);
+      dram_->TryInsert(static_cast<K>(i), tmp_value_ptr);
+    }
+
+/*     for(int i = 0; i < 256; i++){
+      ValuePtr<V> *tmp_value_ptr;
+      dram_->Get(static_cast<K>(i), &tmp_value_ptr);
+      V* tmp_value;
+      tmp_value = tmp_value_ptr->GetValue(0, 0);
+      LOG(INFO) << tmp_value[i % 32];
+    } */
+    free(default_value);
+  } 
 
   Status Get(K key, ValuePtr<V>** value_ptr) override {
-    Status s = hbm_->Get(key, value_ptr);
-    if (s.ok()) {
-      return s;
-    }
-    s = dram_->Get(key, value_ptr);
-    if (s.ok()) {
-      AddCopyBackFlagToValuePtr(value_ptr, COPYBACK);
-      return s;
-    }
-    return s;
+
   }
 
   void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
                 const K* keys,
-                ValuePtr<V>** value_ptr_list,
+                V* output,
                 int64 num_of_keys,
                 int64 value_len) override {
-    int num_worker_threads = ctx.worker_threads->num_threads;
-    std::vector<std::list<int64>>
-        copyback_cursor_list(num_worker_threads + 1);
+    int miss_count = 0;
+    K *gather_status;
+    gather_status = new K[num_of_keys];
+    hbm_->BatchGet(
+      ctx, keys, output, num_of_keys, value_len, miss_count, gather_status);
+    LOG(INFO) << miss_count;
+    LOG(INFO) << value_len;
+    if(miss_count > 0){
+      V *memcpy_buffer_cpu, *memcpy_buffer_gpu;
+      memcpy_buffer_cpu = new V[miss_count * value_len];
+      cudaMalloc((void**)&memcpy_buffer_gpu, miss_count * value_len * sizeof(V));
 
-    BatchGetValuePtrs(ctx, keys, value_ptr_list, num_of_keys,
-                      copyback_cursor_list);
+      int *missing_index_cpu, *missing_index_gpu;
+      missing_index_cpu = new int[miss_count];
+      cudaMalloc((void**)&missing_index_gpu, miss_count * sizeof(int));
 
-    CopyEmbeddingsFromDramToHbm(
-        ctx, keys, value_ptr_list, copyback_cursor_list[0],
-        value_len);
+      int missing_place = 0;
+      for(int i = 0; i < num_of_keys; i++){
+        if(gather_status[i] != 0){
+          missing_index_cpu[missing_place] = i;
+          ValuePtr<V> *tmp_value_ptr;
+          dram_->Get(gather_status[i], &tmp_value_ptr);
+          V* tmp_value;
+          tmp_value = tmp_value_ptr->GetValue(0, 0);
+          memcpy(memcpy_buffer_cpu + missing_place * value_len, tmp_value, value_len * sizeof(V));
+          missing_place++;
+        }
+      }
+
+      cudaMemcpy(memcpy_buffer_gpu, memcpy_buffer_cpu,
+        miss_count * value_len * sizeof(V), cudaMemcpyHostToDevice);
+      cudaMemcpy(missing_index_gpu, missing_index_cpu,
+        miss_count * sizeof(int), cudaMemcpyHostToDevice);
+      
+      hbm_->BatchGetMissing(
+        ctx, keys, output, value_len, miss_count, missing_index_gpu, memcpy_buffer_gpu);
+
+
+      delete []memcpy_buffer_cpu;
+      cudaFree(memcpy_buffer_gpu);
+      delete []missing_index_cpu;
+      cudaFree(missing_index_gpu);
+    }
+
+
+    delete []gather_status;
   }
 
   void Insert(K key, ValuePtr<V>* value_ptr) override {
-    hbm_->Insert(key, value_ptr);
+
   }
 
-  void BatchGetOrCreate(
-      const EmbeddingVarContext<GPUDevice>& ctx,
-      const K* keys,
-      ValuePtr<V>** value_ptr_list,
-      int64 num_of_keys,
-      int64 value_len,
-      std::vector<std::list<int64>>& not_fountd_cursor_list) override {
-    int num_worker_threads = ctx.worker_threads->num_threads;
-    std::vector<std::list<int64>>
-        copyback_cursor_list(num_worker_threads + 1);
-
-    BatchGetValuePtrs(ctx, keys, value_ptr_list, num_of_keys,
-                      copyback_cursor_list, &not_fountd_cursor_list);
-
-    CopyEmbeddingsFromDramToHbm(
-        ctx, keys, value_ptr_list, copyback_cursor_list[0],
-        value_len);
-
-    CreateValuePtrs(ctx, keys, value_ptr_list,
-                    not_fountd_cursor_list[0], value_len);
-  }
 
   void Insert(K key, ValuePtr<V>** value_ptr,
               size_t alloc_len) override {
-    hbm_->Insert(key, value_ptr, alloc_len);
+
   }
 
   void InsertToDram(K key, ValuePtr<V>** value_ptr,
               int64 alloc_len) override {
-    dram_->Insert(key, value_ptr, alloc_len);
+
   }
 
   Status GetOrCreate(K key, ValuePtr<V>** value_ptr,
       size_t size) override {
-    Status s = hbm_->Get(key, value_ptr);
-    if (s.ok()) {
-      return s;
-    }
-    ValuePtr<V>* gpu_value_ptr = hbm_->CreateValuePtr(size);
-    {
-      mutex_lock l(memory_pool_mu_);
-      gpu_value_ptr->SetPtr(embedding_mem_pool_->Allocate());
-      *value_ptr = gpu_value_ptr;
-    }
 
-    s = hbm_->TryInsert(key, *value_ptr);
-    if (s.ok()) {
-      return s;
-    }
-    // Insert Failed, key already exist
-    {
-      mutex_lock l(memory_pool_mu_);
-      embedding_mem_pool_->Deallocate((*value_ptr)->GetValue(0, 0));
-    }
-    delete *value_ptr;
-    return hbm_->Get(key, value_ptr);
+
   }
 
   Status GetOrCreate(K key, ValuePtr<V>** value_ptr,
       size_t size, CopyBackFlag &need_copyback) override {
-    need_copyback = NOT_COPYBACK;
-    Status s = hbm_->Get(key, value_ptr);
-    if (s.ok()) {
-      return s;
-    }
-    s = dram_->Get(key, value_ptr);
-    if (s.ok()) {
-      need_copyback = COPYBACK;
-      return s;
-    }
 
-    hbm_->Insert(key, value_ptr, size);
     return Status::OK();
   }
 
   void ImportToHbm(
       K* ids, int64 size, int64 value_len, int64 emb_index) override {
-    V* memcpy_buffer_cpu = new V[size * value_len];
-    V** value_address = new V*[size];
-    V* memcpy_buffer_gpu =
-        (V*)gpu_alloc_->AllocateRaw(
-            Allocator::kAllocatorAlignment,
-            size * value_len * sizeof(V));
-    V* dev_value_address =
-        (V*)gpu_alloc_->AllocateRaw(
-            Allocator::kAllocatorAlignment,
-            size * sizeof(V*));
-    ValuePtr<V>** gpu_value_ptrs = new ValuePtr<V>*[size];
-    ValuePtr<V>** cpu_value_ptrs = new ValuePtr<V>*[size];
-    {
-      //Mutex with other Import Ops
-      mutex_lock l(memory_pool_mu_);
-      for (int64 i = 0; i < size; i++) {
-        dram_->Get(ids[i], &cpu_value_ptrs[i]);
-        gpu_value_ptrs[i] = hbm_->CreateValuePtr(value_len);
-        V* val_ptr = embedding_mem_pool_->Allocate();
-        gpu_value_ptrs[i]->SetPtr(val_ptr);
-        memcpy((char *)gpu_value_ptrs[i]->GetPtr(),
-               (char *)cpu_value_ptrs[i]->GetPtr(),
-               sizeof(FixedLengthHeader));
-      }
-    }
-    //Split from above for loop for minize the cost of mutex lock
-    //TODO: Speed up with intra parallelism
-    std::vector<ValuePtr<V>*> invalid_value_ptrs;
-    for (int64 i = 0; i < size; i++) {
-      memcpy(memcpy_buffer_cpu + i * value_len,
-          cpu_value_ptrs[i]->GetValue(emb_index,
-              Storage<K, V>::GetOffset(emb_index)), value_len * sizeof(V));
-      Status s = hbm_->TryInsert(ids[i], gpu_value_ptrs[i]);
-      if (!s.ok()) {
-        invalid_value_ptrs.emplace_back(gpu_value_ptrs[i]);
-        hbm_->Get(ids[i], &gpu_value_ptrs[i]);
-      }
-      gpu_value_ptrs[i]->SetInitialized(emb_index);
-      value_address[i] = gpu_value_ptrs[i]->GetValue(
-          emb_index, Storage<K, V>::GetOffset(emb_index));
-    }
-    cudaMemcpy(memcpy_buffer_gpu, memcpy_buffer_cpu,
-        size * value_len * sizeof(V), cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_value_address, value_address,
-        size * sizeof(V*), cudaMemcpyHostToDevice);
-    {
-      mutex_lock l(memory_pool_mu_);
-      embedding_mem_pool_->Deallocate(invalid_value_ptrs);
-    }
-    int block_dim = 128;
-      void* args[] = {
-          (void*)&dev_value_address,
-          (void*)&memcpy_buffer_gpu,
-          (void*)&value_len,
-          (void*)&size};
 
-    cudaLaunchKernel(
-          (void *)BatchUnpack<V>,
-          (size + block_dim - 1) / block_dim * value_len,
-          block_dim,
-          args, 0, NULL);
-    cudaDeviceSynchronize();
-
-    delete[] memcpy_buffer_cpu;
-    delete[] cpu_value_ptrs;
-    delete[] gpu_value_ptrs;
-    delete[] value_address;
-    gpu_alloc_->DeallocateRaw(dev_value_address);
-    gpu_alloc_->DeallocateRaw(memcpy_buffer_gpu);
   }
 
   void CopyEmbeddingsFromCPUToGPU(
@@ -244,55 +175,10 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
       se::Stream* compute_stream,
       EventMgr* event_mgr,
       const DeviceBase::CpuWorkerThreads* worker_threads) override {
-    auto memcpy_buffer_cpu = TypedAllocator::Allocate<V>(cpu_allocator(),
-        total * value_len, AllocationAttributes());
-    int64* memory_index = new int64[total];
-    int64 i = 0;
-    auto it = copyback_cursor.cbegin();
-    {
-      //Mutex with eviction thread
-      mutex_lock l(memory_pool_mu_);
-      for ( ; it != copyback_cursor.cend(); ++it, ++i) {
-        int64 j = *it;
-        memory_index[i] = j;
-        ValuePtr<V>* gpu_value_ptr = hbm_->CreateValuePtr(value_len);
-        V* val_ptr = embedding_mem_pool_->Allocate();
-        bool flag = gpu_value_ptr->SetPtr(val_ptr);
-        if (!flag) {
-          embedding_mem_pool_->Deallocate(val_ptr);
-        }
-        memcpy((char *)gpu_value_ptr->GetPtr(),
-               (char *)memcpy_address[j] - sizeof(FixedLengthHeader),
-               sizeof(FixedLengthHeader));
-        gpu_value_ptrs[i] = gpu_value_ptr;
-      }
-    }
-    //Split from above for loop for minize the cost of mutex lock
-    auto do_work = [memory_index, memcpy_address,
-                    memcpy_buffer_cpu, gpu_value_ptrs,
-                    value_len, this] (int64 start, int64 limit) {
-      for (int i = start; i < limit; i++) {
-        int j = memory_index[i];
-        memcpy(memcpy_buffer_cpu + i * value_len,
-               memcpy_address[j], value_len * sizeof(V));
-      }
-    };
-    Shard(worker_threads->num_threads, worker_threads->workers, total,
-          1000, do_work);
-    DeviceMemoryBase gpu_dst_ptr(
-        memcpy_buffer_gpu, total * value_len * sizeof(V));
-    compute_stream->ThenMemcpy(
-        &gpu_dst_ptr, memcpy_buffer_cpu, total * value_len * sizeof(V));
-    SyncWithEventMgr(compute_stream, event_mgr);
-    TypedAllocator::Deallocate(
-        cpu_allocator(), memcpy_buffer_cpu, total * value_len);
-    delete[] memory_index;
   }
 
   Status Remove(K key) override {
-    hbm_->Remove(key);
-    dram_->Remove(key);
-    return Status::OK();
+
   }
 
   int64 Size() const override {
@@ -326,7 +212,7 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
   }
 
   bool IsSetAssociativeHbm() override {
-    return false;
+    return true;
   }
 
   bool IsSingleHbm() override {
@@ -401,73 +287,22 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
       Allocator* alloc,
       int64 value_len,
       int64 block_size) override {
-    embedding_mem_pool_ =
-       new EmbeddingMemoryPool<V>(alloc, value_len, block_size);
+
   }
 
   void AllocateMemoryForNewFeatures(
       const std::vector<ValuePtr<V>*>& value_ptr_list) override {
-    //Mutex with eviction thread
-    mutex_lock l(memory_pool_mu_);
-    for (auto it : value_ptr_list) {
-      V* val_ptr = embedding_mem_pool_->Allocate();
-      bool flag = it->SetPtr(val_ptr);
-      if (!flag) {
-        embedding_mem_pool_->Deallocate(val_ptr);
-      }
-    }
+
   }
 
   void AllocateMemoryForNewFeatures(
      ValuePtr<V>** value_ptr_list,
      int64 num_of_value_ptrs) override {
-    //Mutex with other ImportOps
-    mutex_lock l(memory_pool_mu_);
-    for (int64 i = 0; i < num_of_value_ptrs; i++) {
-      V* val_ptr = embedding_mem_pool_->Allocate();
-      bool flag = value_ptr_list[i]->SetPtr(val_ptr);
-      if (!flag) {
-        embedding_mem_pool_->Deallocate(val_ptr);
-      }
-    }
+
   }
 
   void BatchEviction() override {
-    constexpr int EvictionSize = 10000;
-    K evic_ids[EvictionSize];
-    if (!MultiTierStorage<K, V>::ready_eviction_) {
-      return;
-    }
-    mutex_lock l(*(hbm_->get_mutex()));
-    mutex_lock l1(*(dram_->get_mutex()));
 
-    int64 cache_count = MultiTierStorage<K, V>::cache_->size();
-    if (cache_count > MultiTierStorage<K, V>::cache_capacity_) {
-      // eviction
-      int k_size = cache_count - MultiTierStorage<K, V>::cache_capacity_;
-      k_size = std::min(k_size, EvictionSize);
-      size_t true_size =
-          MultiTierStorage<K, V>::cache_->get_evic_ids(evic_ids, k_size);
-      ValuePtr<V>* value_ptr;
-      std::vector<K> keys;
-      std::vector<ValuePtr<V>*> value_ptrs;
-
-      for (int64 i = 0; i < true_size; ++i) {
-        if (hbm_->Get(evic_ids[i], &value_ptr).ok()) {
-          keys.emplace_back(evic_ids[i]);
-          value_ptrs.emplace_back(value_ptr);
-        }
-      }
-      dram_->BatchCommit(keys, value_ptrs);
-      {
-        //Mutex with main thread
-        mutex_lock l_mem(memory_pool_mu_);
-        embedding_mem_pool_->Deallocate(value_ptrs);
-      }
-      for (auto it : keys) {
-        TF_CHECK_OK(hbm_->Remove(it));
-      }
-    }
   }
 
  protected:
@@ -669,7 +504,7 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
   }
 
  private:
-  HbmStorageWithCpuKv<K, V>* hbm_ = nullptr;
+  SetAssociativeHbmStorage<K, V>* hbm_ = nullptr;
   DramStorage<K, V>* dram_ = nullptr;
   EmbeddingMemoryPool<V>* embedding_mem_pool_ = nullptr;
   Allocator* gpu_alloc_;

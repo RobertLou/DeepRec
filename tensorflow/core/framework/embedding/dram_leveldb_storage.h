@@ -108,6 +108,10 @@ class DramLevelDBStore : public MultiTierStorage<K, V> {
     return false;
   }
 
+  bool IsSetAssociativeHbm() override {
+    return false;
+  }
+
   bool IsSingleHbm() override {
     return false;
   }
