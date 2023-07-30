@@ -56,6 +56,9 @@ template<class K, class V>
 class HbmDramStorage;
 
 template<class K, class V>
+class SetAssociativeHbmDramStorage;
+
+template<class K, class V>
 class HbmDramSsdStorage;
 #endif
 
@@ -287,6 +290,10 @@ class SingleTierStorage : public Storage<K, V> {
     return false;
   }
 
+  bool IsSetAssociativeHbm() override {
+    return false;
+  }
+
   bool IsSingleHbm() override {
     return false;
   }
@@ -372,6 +379,7 @@ class DramStorage : public SingleTierStorage<K, V> {
   friend class DramLevelDBStore<K, V>;
 #if GOOGLE_CUDA
   friend class HbmDramStorage<K, V>;
+  friend class SetAssociativeHbmDramStorage<K, V>;
   friend class HbmDramSsdStorage<K, V>;
 #endif
  protected:
@@ -524,6 +532,7 @@ class HbmStorageWithCpuKv: public SingleTierStorage<K, V> {
   }
  public:
   friend class HbmDramStorage<K, V>;
+  friend class SetAssociativeHbmDramStorage<K, V>;
   friend class HbmDramSsdStorage<K, V>;
  protected:
   void SetTotalDims(int64 total_dims) override {}
@@ -538,6 +547,254 @@ class HbmStorageWithCpuKv: public SingleTierStorage<K, V> {
         shrink_args,
         value_len);
   }
+};
+
+template<typename K, typename V>
+class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
+ public:
+  SetAssociativeHbmStorage(const StorageConfig& sc, Allocator* alloc,
+      LayoutCreator<V>* lc) : SingleTierStorage<K, V>(
+          sc, alloc, new LocklessHashMap<K, V>(), lc) {
+  }
+
+  ~SetAssociativeHbmStorage() override {
+    gpu_alloc_->DeallocateRaw(keys_);
+    gpu_alloc_->DeallocateRaw(vals_);
+    gpu_alloc_->DeallocateRaw(slot_counter_);
+    gpu_alloc_->DeallocateRaw(global_counter_);
+    gpu_alloc_->DeallocateRaw(set_mutex_);
+  }
+
+  void Init(Allocator* alloc, int cache_capacity, int alloc_len) {
+    num_slot_ = cache_capacity;
+    capacity_in_set_ = num_slot_ / (SET_ASSOCIATIVITY * WARP_SIZE);
+    embedding_vec_size_ = alloc_len;
+
+    gpu_alloc_ = alloc;
+
+    // Allocate GPU memory for cache
+    keys_ = (slabset *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(slabset) * capacity_in_set_);
+    vals_ = (V *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(V) * embedding_vec_size_ * num_slot_);
+    slot_counter_ = (int *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(int) * num_slot_);
+    global_counter_ = (int *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(int));
+
+    // Allocate GPU memory for set mutex
+    set_mutex_ = (int *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(int) * capacity_in_set_);
+
+    const K empty_key = -1;
+
+    // Initialize the cache, set all entry to unused <K,V>
+      void* args[] = {
+          (void*)&keys_,
+          (void*)&slot_counter_,
+          (void*)&global_counter_,
+          (void*)&num_slot_,
+          (void*)&empty_key,
+          (void*)&set_mutex_,
+          (void*)&capacity_in_set_};
+    cudaLaunchKernel(
+      (void *)init_cache<K>,
+      ((num_slot_ - 1) / BLOCK_SIZE_) + 1,
+      BLOCK_SIZE_,
+      args, 0, NULL);
+  }
+  
+  void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
+                const K* keys,
+                V* output,
+                int64 num_of_keys,
+                int64 value_len,
+                int* d_missing_index,
+                K* d_missing_keys,
+                int* d_missing_len,
+                int* miss_count) {           
+    // Update the global counter as user perform a new(most recent) read operation to the cache
+    // Resolve distance overflow issue as well.
+    void* args[] = {
+        (void*)&global_counter_,
+        (void*)&d_missing_len};
+
+    cudaLaunchKernel(
+      (void *)update_kernel_overflow_ignore,
+      1, 1, args, 0, ctx.gpu_device.stream());
+
+    // Read from the cache
+    // Touch and refresh the hitting slot
+    const int keys_per_block = (BLOCK_SIZE_ / WARP_SIZE) * task_per_warp_tile_;
+    const int grid_size = ((num_of_keys - 1) / keys_per_block) + 1;
+
+    void* args2[] = {
+      (void*)&keys,
+      (void*)&num_of_keys,
+      (void*)&output,
+      (void*)&value_len,
+      (void*)&d_missing_index,
+      (void*)&d_missing_keys,
+      (void*)&d_missing_len,
+      (void*)&miss_count,
+      (void*)&global_counter_,
+      (void*)&slot_counter_,
+      (void*)&capacity_in_set_,
+      (void*)&keys_,
+      (void*)&vals_,
+      (void*)&set_mutex_,
+      (void*)&task_per_warp_tile_};
+
+    cudaLaunchKernel(
+      (void *)get_kernel<K, V>,
+      grid_size,
+      BLOCK_SIZE_,
+      args2, 0, ctx.gpu_device.stream());
+  }
+
+
+  void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
+              const K* missing_keys,
+              int* missing_index,
+              V* output,
+              int64 value_len,
+              int miss_count,
+              V *memcpy_buffer_gpu,
+              bool* initialize_status,
+              V *default_value_ptr) {
+
+    /*Copy missing embeddings to output*/
+    void* args[] = {
+      (void*)&output,
+      (void*)&memcpy_buffer_gpu,
+      (void*)&missing_index,
+      (void*)&value_len,
+      (void*)&miss_count};
+
+    cudaLaunchKernel(
+      (void *)CopyMissingToOutput<V>,
+      (miss_count * value_len - 1) / BLOCK_SIZE_ + 1,
+      BLOCK_SIZE_,
+      args, 0, ctx.gpu_device.stream()); 
+
+    // Try to insert the <k,v> paris into the cache as long as there are unused slot
+    // Then replace the <k,v> pairs into the cache
+    const int keys_per_block = (BLOCK_SIZE_ / WARP_SIZE) * task_per_warp_tile_;
+    const int grid_size = ((miss_count - 1) / keys_per_block) + 1;
+
+    void* args2[] = {
+      (void*)&missing_keys,
+      (void*)&memcpy_buffer_gpu,
+      (void*)&value_len,
+      (void*)&miss_count,
+      (void*)&keys_,
+      (void*)&vals_,
+      (void*)&slot_counter_,
+      (void*)&set_mutex_,
+      (void*)&global_counter_,
+      (void*)&capacity_in_set_,
+      (void*)&task_per_warp_tile_};
+
+    cudaLaunchKernel(
+      (void *)insert_replace_kernel<K, V>,
+      grid_size,
+      BLOCK_SIZE_,
+      args2, 0, ctx.gpu_device.stream()); 
+  }
+
+  void Restore(const K* keys,
+              int64 value_len,
+              int size,
+              V *memcpy_buffer_gpu){
+    // Try to insert the <k,v> paris into the cache as long as there are unused slot
+    // Then replace the <k,v> pairs into the cache
+    const int keys_per_block = (BLOCK_SIZE_ / WARP_SIZE) * task_per_warp_tile_;
+    const int grid_size = ((size - 1) / keys_per_block) + 1;
+
+    void* args[] = {
+      (void*)&keys,
+      (void*)&memcpy_buffer_gpu,
+      (void*)&value_len,
+      (void*)&size,
+      (void*)&keys_,
+      (void*)&vals_,
+      (void*)&slot_counter_,
+      (void*)&set_mutex_,
+      (void*)&global_counter_,
+      (void*)&capacity_in_set_,
+      (void*)&task_per_warp_tile_};
+
+    cudaLaunchKernel(
+      (void *)insert_replace_kernel<K, V>,
+      grid_size,
+      BLOCK_SIZE_,
+      args, 0, NULL); 
+    PrintCache();
+  }
+
+  void PrintCache(){
+    cudaDeviceSynchronize();
+    slabset* h_keys = nullptr;
+    V* h_vals = nullptr;
+    h_keys = (slabset *)malloc(sizeof(slabset) * capacity_in_set_);
+    h_vals = (V *)malloc(sizeof(V) * embedding_vec_size_ * num_slot_);
+
+    cudaMemcpy(h_keys, keys_, sizeof(slabset) * capacity_in_set_, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_vals, vals_, sizeof(V) * embedding_vec_size_ * num_slot_, cudaMemcpyDeviceToHost);
+    for(int i = 0; i < 4; i++){
+      for(int j = 0; j < SET_ASSOCIATIVITY; j++){
+        for(int k = 0; k < WARP_SIZE; k++){
+          K key = h_keys[i].set_[j].slab_[k];
+          int val_index = ((i * SET_ASSOCIATIVITY + j) * WARP_SIZE + k) * embedding_vec_size_;
+          if(key != -1 && key % capacity_in_set_ != i){
+            LOG(INFO) << "wrong!!!!!";
+          }
+          std::cout << "key:" << key << std::endl;
+          std::cout << "[";
+          for(int m = 0; m < 10; m++){
+            std::cout << h_vals[val_index + m] << ",";
+          }
+          std::cout << "]" << std::endl;
+        }
+      }
+    }
+
+    free(h_keys);
+    free(h_vals);
+  }
+
+ public:
+  friend class HbmDramStorage<K, V>;
+  friend class SetAssociativeHbmDramStorage<K, V>;
+  friend class HbmDramSsdStorage<K, V>;
+
+  using slabset = slab_set<K>;
+ protected:
+  void SetTotalDims(int64 total_dims) override {}
+ private:
+  static const size_t BLOCK_SIZE_ = 128;
+  const int task_per_warp_tile_ = 1;
+
+  slabset* keys_ = nullptr;
+  V* vals_ = nullptr;
+  int* slot_counter_ = nullptr;
+  int* global_counter_ = nullptr;
+
+  // Cache capacity
+  int capacity_in_set_;
+  int num_slot_;
+
+  // Embedding vector size
+  int embedding_vec_size_;
+
+  int* set_mutex_ = nullptr;
+  
+  Allocator* gpu_alloc_;
 };
 #endif // GOOGLE_CUDA
 

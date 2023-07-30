@@ -84,6 +84,25 @@ class Storage {
       int64 num_of_keys,
       int64 value_len,
       std::vector<std::list<int64>>& not_found_cursor_list) {}
+  virtual void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
+                        const K* key,
+                        V* output,
+                        ValuePtr<V>** value_ptr_list,
+                        int64 num_of_keys,
+                        int64 value_len,
+                        K* &missing_keys,
+                        int* &missing_index,
+                        int* &missing_len,
+                        int &miss_count) {}
+  virtual void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
+                        const K* missing_keys,
+                        int* missing_index,
+                        V* output,
+                        int64 value_len,
+                        int miss_count,
+                        V **memcpy_address,
+                        bool* initialize_status,
+                        V *default_value_ptr) {}
 #endif //GOOGLE_CUDA
   virtual Status Contains(K key) = 0;
   virtual void Insert(K key, ValuePtr<V>** value_ptr,
@@ -140,6 +159,7 @@ class Storage {
   virtual BatchCache<K>* Cache() = 0;
   virtual bool IsMultiLevel() = 0;
   virtual bool IsUseHbm() = 0;
+  virtual bool IsSetAssociativeHbm() = 0;
   virtual bool IsSingleHbm() = 0;
   virtual bool IsUsePersistentStorage() { return false; };
   virtual void Schedule(std::function<void()> fn) = 0;
@@ -210,6 +230,8 @@ class Storage {
     restorer.RestoreCkpt(emb_config, device);
   };
 
+  virtual void InitSetAssociativeHbmDramStorage() {}
+  
  protected:
   virtual Status RestoreFeatures(int64 key_num, int bucket_num, int64 partition_id,
                                  int64 partition_num, int64 value_len, bool is_filter,

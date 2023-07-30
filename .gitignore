@@ -44,3 +44,5 @@ Podfile.lock
 Pods
 xcuserdata
 *~
+time/a.out
+time/delete_txt_files
