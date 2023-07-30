@@ -56,6 +56,9 @@ template<class K, class V>
 class HbmDramStorage;
 
 template<class K, class V>
+class SetAssociativeHbmDramStorage;
+
+template<class K, class V>
 class HbmDramSsdStorage;
 #endif
 
@@ -287,6 +290,10 @@ class SingleTierStorage : public Storage<K, V> {
     return false;
   }
 
+  bool IsSetAssociativeHbm() override {
+    return false;
+  }
+
   bool IsSingleHbm() override {
     return false;
   }
@@ -372,6 +379,7 @@ class DramStorage : public SingleTierStorage<K, V> {
   friend class DramLevelDBStore<K, V>;
 #if GOOGLE_CUDA
   friend class HbmDramStorage<K, V>;
+  friend class SetAssociativeHbmDramStorage<K, V>;
   friend class HbmDramSsdStorage<K, V>;
 #endif
  protected:
@@ -524,6 +532,7 @@ class HbmStorageWithCpuKv: public SingleTierStorage<K, V> {
   }
  public:
   friend class HbmDramStorage<K, V>;
+  friend class SetAssociativeHbmDramStorage<K, V>;
   friend class HbmDramSsdStorage<K, V>;
  protected:
   void SetTotalDims(int64 total_dims) override {}
@@ -538,6 +547,196 @@ class HbmStorageWithCpuKv: public SingleTierStorage<K, V> {
         shrink_args,
         value_len);
   }
+};
+
+template<typename K, typename V>
+class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
+ public:
+  SetAssociativeHbmStorage(const StorageConfig& sc, Allocator* alloc,
+      LayoutCreator<V>* lc) : SingleTierStorage<K, V>(
+          sc, alloc, new LocklessHashMap<K, V>(), lc) {
+  }
+
+  ~SetAssociativeHbmStorage() override {}
+
+  void Init(Allocator* alloc, int alloc_len) {
+    ways = 8;
+    cache_size = 128;
+    cache_num = cache_size / ways;
+    key_size = sizeof(K);
+    header_size = sizeof(FixedLengthGPUHeader<K>);
+    alloc_size = header_size + alloc_len * sizeof(V);
+    LOG(INFO) << alloc_size;
+    cache = (char *)alloc->AllocateRaw(
+        Allocator::kAllocatorAlignment,
+        alloc_size * cache_size);
+    
+    int block_dim = 128;
+      void* args[] = {
+          (void*)&cache,
+          (void*)&key_size,
+          (void*)&header_size,
+          (void*)&alloc_size,
+          (void*)&alloc_len,
+          (void*)&cache_size};
+    cudaLaunchKernel(
+      (void *)InitEmptyCache<K, V>,
+      (cache_size + block_dim - 1) / block_dim,
+      block_dim,
+      args, 0, NULL);
+    
+    cudaMalloc((void**)&locks, cache_num * sizeof(int));
+    cudaMemset(locks, 0, cache_num * sizeof(int));
+    
+
+    K *keys, *dev_keys;
+    keys = (K*) malloc(sizeof(K) * cache_size);
+    dev_keys = (K*) alloc->AllocateRaw(
+        Allocator::kAllocatorAlignment,
+        sizeof(K) * cache_size);
+    for(int j = 0; j < cache_size; j++){
+      keys[j] = j;
+    }
+    cudaMemcpy(dev_keys, keys, sizeof(K) * cache_size, cudaMemcpyHostToDevice);
+    
+
+      void* args2[] = {
+          (void*)&locks,
+          (void*)&dev_keys,
+          (void*)&cache,
+          (void*)&key_size,
+          (void*)&header_size,
+          (void*)&alloc_size,
+          (void*)&alloc_len,
+          (void*)&ways,
+          (void*)&cache_num,
+          (void*)&cache_size};
+    cudaLaunchKernel(
+      (void *)DeviceInitEmbedding<K, V>,
+      (cache_size + block_dim - 1) / block_dim,
+      block_dim,
+      args2, 0, NULL);
+
+
+    void *a = malloc(alloc_size * cache_size);
+    cudaMemcpy(a, cache, alloc_size * cache_size, cudaMemcpyDeviceToHost);
+    for(int i = 0; i < cache_size; i++){
+        char *tmp_ptr = static_cast<char*>(a) + alloc_size * i;
+        K *key_ptr = static_cast<K *>(static_cast<void*>(tmp_ptr));
+        int *freq_ptr = static_cast<int *>(static_cast<void*>(tmp_ptr + key_size));
+        V *value_ptr = static_cast<V *>(static_cast<void*>(tmp_ptr + header_size));
+        //std::cout << *key_ptr << std::endl;
+        //std::cout << *freq_ptr << std::endl;
+        //std::cout << value_ptr[0] << std::endl;
+        //std::cout << value_ptr[alloc_len - 1] << std::endl;
+    }
+    free(a);
+
+    free(keys);
+    cudaFree(dev_keys);
+   
+  }
+  
+  void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
+                const K* keys,
+                V* output,
+                int64 num_of_keys,
+                int64 value_len,
+                int &miss_count,
+                K *gather_status) {
+    int *dev_miss_count;
+    cudaMalloc((void**)&dev_miss_count, sizeof(int));
+
+    K *dev_gather_status;
+    cudaMalloc((void**)&dev_gather_status, sizeof(K) * num_of_keys);
+
+    int block_dim = 128;
+      void* args[] = {
+          (void*)&keys,
+          (void*)&cache,
+          (void*)&output,
+          (void*)&dev_miss_count,
+          (void*)&dev_gather_status,
+          (void*)&key_size,
+          (void*)&header_size,
+          (void*)&alloc_size,
+          (void*)&value_len,
+          (void*)&ways,
+          (void*)&cache_num,
+          (void*)&num_of_keys};
+    cudaLaunchKernel(
+      (void *)GatherEmbedding<K, V>,
+      (num_of_keys + block_dim - 1) / block_dim,
+      block_dim,
+      args, 0, NULL);
+    cudaMemcpy(&miss_count, dev_miss_count, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(gather_status, dev_gather_status, sizeof(K) * num_of_keys, cudaMemcpyDeviceToHost);
+
+    cudaFree(dev_miss_count);
+    cudaFree(dev_gather_status);
+  }
+
+
+  void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
+              const K* keys,
+              V* output,
+              int64 value_len,
+              int &miss_count,
+              int *missing_index_gpu,
+              V *memcpy_buffer_gpu) {
+    int block_dim = 128;
+      void* args[] = {
+          (void*)&locks,
+          (void*)&keys,
+          (void*)&cache,
+          (void*)&output,
+          (void*)&missing_index_gpu,
+          (void*)&memcpy_buffer_gpu,
+          (void*)&key_size,
+          (void*)&header_size,
+          (void*)&alloc_size,
+          (void*)&value_len,
+          (void*)&ways,
+          (void*)&cache_num,
+          (void*)&miss_count};
+    cudaLaunchKernel(
+      (void *)GatherMissingEmbedding<K, V>,
+      (miss_count + block_dim - 1) / block_dim,
+      block_dim,
+      args, 0, NULL);  
+  
+  }
+
+  void Insert(K key, ValuePtr<V>* value_ptr) override {
+    do {
+      Status s = SingleTierStorage<K, V>::kv_->Insert(key, value_ptr);
+      if (s.ok()) {
+        break;
+      } else {
+        value_ptr->Destroy(SingleTierStorage<K, V>::alloc_);
+        delete value_ptr;
+      }
+    } while (!(SingleTierStorage<K, V>::kv_->Lookup(key, &value_ptr)).ok());
+  }
+
+  void Insert(K key, ValuePtr<V>** value_ptr, size_t alloc_len) override {
+    SingleTierStorage<K, V>::Insert(key, value_ptr, alloc_len);
+  }
+
+  Status TryInsert(K key, ValuePtr<V>* value_ptr) {
+    return SingleTierStorage<K, V>::kv_->Insert(key, value_ptr);
+  }
+ public:
+  friend class HbmDramStorage<K, V>;
+  friend class SetAssociativeHbmDramStorage<K, V>;
+  friend class HbmDramSsdStorage<K, V>;
+ protected:
+  void SetTotalDims(int64 total_dims) override {}
+ private:
+  int key_size, header_size, alloc_size;
+  int cache_size, cache_num, ways;
+  int *locks;
+  char *cache;
 };
 #endif // GOOGLE_CUDA
 

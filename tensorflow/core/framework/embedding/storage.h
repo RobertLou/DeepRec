@@ -84,6 +84,11 @@ class Storage {
       int64 num_of_keys,
       int64 value_len,
       std::vector<std::list<int64>>& not_found_cursor_list) {}
+  virtual void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
+                        const K* key,
+                        V* output,
+                        int64 num_of_keys,
+                        int64 value_len) {}
 #endif //GOOGLE_CUDA
   virtual Status Contains(K key) = 0;
   virtual void Insert(K key, ValuePtr<V>** value_ptr,
@@ -140,6 +145,7 @@ class Storage {
   virtual BatchCache<K>* Cache() = 0;
   virtual bool IsMultiLevel() = 0;
   virtual bool IsUseHbm() = 0;
+  virtual bool IsSetAssociativeHbm() = 0;
   virtual bool IsSingleHbm() = 0;
   virtual bool IsUsePersistentStorage() { return false; };
   virtual void Schedule(std::function<void()> fn) = 0;
@@ -356,6 +362,8 @@ class Storage {
         partitioned_ckpt_data.ExportToCkpt(tensor_name, writer, value_len);
     return Status::OK();
   }
+
+  virtual void InitSetAssociativeHbmDramStorage() {}
 
  protected:
   int64 alloc_len_ = 0;

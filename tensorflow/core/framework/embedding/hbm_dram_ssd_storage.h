@@ -298,6 +298,10 @@ class HbmDramSsdStorage : public MultiTierStorage<K, V> {
     return true;
   }
 
+  bool IsSetAssociativeHbm() override {
+    return false;
+  }
+
   bool IsSingleHbm() override {
     return false;
   }

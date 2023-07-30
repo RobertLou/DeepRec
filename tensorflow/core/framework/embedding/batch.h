@@ -17,6 +17,9 @@ limitations under the License.
 #define TENSORFLOW_CORE_FRAMEWORK_EMBEDDING_BATCH_
 
 #if GOOGLE_CUDA
+
+#include<cuda_runtime.h>
+
 namespace tensorflow {
 namespace embedding {
 
@@ -59,6 +62,19 @@ template<class V>
 __global__ void SparseApplyAdamWGPU(V** var, V** m, V** v,
     const V* g, V alpha, V beta1, V beta2, V epsilon,
     V weight_decay, int embedding_dim, long long int limit);
+
+template<class K, class V>
+__global__ void InitEmptyCache(char *cache, int keySize, int headerSize, int allocSize, int value_len, int limit);
+
+template<class K, class V>
+__global__ void DeviceInitEmbedding(int *, K *, char *, int, int, int, int, int, int, int);
+
+template<class K, class V>
+__global__ void GatherEmbedding(K*, char *, V *, int *, K *, int, int, int, int, int, int, int);
+
+template<class K, class V>
+__global__ void GatherMissingEmbedding(int *, K *, char *, V *, int *, V *, int, int, int, int, int, int, int);
+
 }  // namespace tensorflow
 
 #endif  // GOOGLE_CUDA

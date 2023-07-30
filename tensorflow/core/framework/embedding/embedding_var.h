@@ -107,7 +107,25 @@ class EmbeddingVar : public ResourceBase {
       storage_->SetAllocLen(value_len_, emb_config_.slot_num + 1);
     }
 
-    if (storage_->IsUseHbm()) {
+    if (storage_->IsSetAssociativeHbm()){
+#if GOOGLE_CUDA
+      default_value_ = TypedAllocator::Allocate<V>(alloc_,
+          default_tensor.NumElements(), AllocationAttributes());
+      auto default_tensor_flat = default_tensor.flat<V>();
+      dev_addr_buffer_ = nullptr;
+      dev_addr_buffer_size_ = 0;
+      cudaMemcpy(default_value_, &default_tensor_flat(0),
+          default_tensor.TotalBytes(), cudaMemcpyDeviceToDevice);
+      storage_->
+          CreateEmbeddingMemoryPool(
+              alloc_,
+              emb_config_.total_num(
+                  storage_->GetAllocLen()),
+              1024 * 1024 * 64);
+      storage_->InitSetAssociativeHbmDramStorage();
+#endif  // GOOGLE_CUDA
+    }
+    else if (storage_->IsUseHbm()) {
 #if GOOGLE_CUDA
       default_value_ = TypedAllocator::Allocate<V>(alloc_,
           default_tensor.NumElements(), AllocationAttributes());
@@ -170,6 +188,14 @@ class EmbeddingVar : public ResourceBase {
                       int64 num_of_keys) {
     storage_->BatchGet(ctx, keys, value_ptr_list, num_of_keys,
                        emb_config_.total_num(storage_->GetAllocLen()));
+  }
+
+  void BatchLookupKey(const EmbeddingVarContext<GPUDevice>& ctx,
+                      const K* keys,
+                      V* output,
+                      int64 num_of_keys) {
+    storage_->BatchGet(ctx, keys, output, num_of_keys,
+                       ValueLen());
   }
 
   Status LookupOrCreateKey(K key, ValuePtr<V>** value_ptr,
@@ -333,7 +359,12 @@ class EmbeddingVar : public ResourceBase {
     if (IsSingleHbm()) {
       storage_->BatchLookup(context.gpu_device, keys, 
 		            output, num_of_keys, default_value_);
-    } else {
+    } 
+    else if(IsSetAssociativeHbm()){
+      filter_->BatchLookup(context, keys, output,
+                      num_of_keys, default_value_);
+    }
+    else {
       filter_->BatchLookup(context, keys, output,
                            num_of_keys, default_value_,
                            default_value_no_permission_);
@@ -561,6 +592,10 @@ class EmbeddingVar : public ResourceBase {
 
   bool IsUseHbm() {
     return storage_->IsUseHbm();
+  }
+
+  bool IsSetAssociativeHbm() {
+    return storage_->IsSetAssociativeHbm();
   }
 
   bool IsSingleHbm() {
