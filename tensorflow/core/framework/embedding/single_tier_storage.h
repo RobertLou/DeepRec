@@ -557,7 +557,10 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
           sc, alloc, new LocklessHashMap<K, V>(), lc) {
   }
 
-  ~SetAssociativeHbmStorage() override {}
+  ~SetAssociativeHbmStorage() override {
+    gpu_alloc_->DeallocateRaw(cache);
+    gpu_alloc_->DeallocateRaw(locks);
+  }
 
   void Init(Allocator* alloc, int alloc_len) {
     ways = 8;
@@ -567,10 +570,11 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
     header_size = sizeof(FixedLengthGPUHeader<K>);
     alloc_size = header_size + alloc_len * sizeof(V);
     LOG(INFO) << alloc_size;
-    cache = (char *)alloc->AllocateRaw(
+    gpu_alloc_ = alloc;
+    cache = (char *)gpu_alloc_->AllocateRaw(
         Allocator::kAllocatorAlignment,
         alloc_size * cache_size);
-    
+      
     int block_dim = 128;
       void* args[] = {
           (void*)&cache,
@@ -584,22 +588,21 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       (cache_size + block_dim - 1) / block_dim,
       block_dim,
       args, 0, NULL);
-    
-    cudaMalloc((void**)&locks, cache_num * sizeof(int));
-    cudaMemset(locks, 0, cache_num * sizeof(int));
-    
+
+    locks = (int *)gpu_alloc_->AllocateRaw(
+        Allocator::kAllocatorAlignment,
+        cache_num * sizeof(int));
 
     K *keys, *dev_keys;
     keys = (K*) malloc(sizeof(K) * cache_size);
-    dev_keys = (K*) alloc->AllocateRaw(
+    dev_keys = (K*) gpu_alloc_->AllocateRaw(
         Allocator::kAllocatorAlignment,
         sizeof(K) * cache_size);
     for(int j = 0; j < cache_size; j++){
-      keys[j] = j;
+      keys[j] = j + 3;
     }
     cudaMemcpy(dev_keys, keys, sizeof(K) * cache_size, cudaMemcpyHostToDevice);
     
-
       void* args2[] = {
           (void*)&locks,
           (void*)&dev_keys,
@@ -616,24 +619,9 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       (cache_size + block_dim - 1) / block_dim,
       block_dim,
       args2, 0, NULL);
-
-
-    void *a = malloc(alloc_size * cache_size);
-    cudaMemcpy(a, cache, alloc_size * cache_size, cudaMemcpyDeviceToHost);
-    for(int i = 0; i < cache_size; i++){
-        char *tmp_ptr = static_cast<char*>(a) + alloc_size * i;
-        K *key_ptr = static_cast<K *>(static_cast<void*>(tmp_ptr));
-        int *freq_ptr = static_cast<int *>(static_cast<void*>(tmp_ptr + key_size));
-        V *value_ptr = static_cast<V *>(static_cast<void*>(tmp_ptr + header_size));
-        //std::cout << *key_ptr << std::endl;
-        //std::cout << *freq_ptr << std::endl;
-        //std::cout << value_ptr[0] << std::endl;
-        //std::cout << value_ptr[alloc_len - 1] << std::endl;
-    }
-    free(a);
-
+    PrintCache();
     free(keys);
-    cudaFree(dev_keys);
+    gpu_alloc_->DeallocateRaw(dev_keys);
    
   }
   
@@ -645,10 +633,14 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
                 int &miss_count,
                 K *gather_status) {
     int *dev_miss_count;
-    cudaMalloc((void**)&dev_miss_count, sizeof(int));
+    dev_miss_count = (int *)gpu_alloc_->AllocateRaw(
+        Allocator::kAllocatorAlignment,
+        sizeof(int));
 
     K *dev_gather_status;
-    cudaMalloc((void**)&dev_gather_status, sizeof(K) * num_of_keys);
+    dev_gather_status = (K *)gpu_alloc_->AllocateRaw(
+        Allocator::kAllocatorAlignment,
+        sizeof(K) * num_of_keys);
 
     int block_dim = 128;
       void* args[] = {
@@ -668,12 +660,12 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       (void *)GatherEmbedding<K, V>,
       (num_of_keys + block_dim - 1) / block_dim,
       block_dim,
-      args, 0, NULL);
+      args, 0, ctx.gpu_device.stream());
     cudaMemcpy(&miss_count, dev_miss_count, sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(gather_status, dev_gather_status, sizeof(K) * num_of_keys, cudaMemcpyDeviceToHost);
 
-    cudaFree(dev_miss_count);
-    cudaFree(dev_gather_status);
+    gpu_alloc_->DeallocateRaw(dev_miss_count);
+    gpu_alloc_->DeallocateRaw(dev_gather_status);
   }
 
 
@@ -699,33 +691,73 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
           (void*)&ways,
           (void*)&cache_num,
           (void*)&miss_count};
+    /*      
+    TF_CHECK_OK(GpuLaunchKernel(
+        GatherMissingEmbedding<K, V>,
+        (miss_count + block_dim - 1) / block_dim,
+        block_dim, 0, ctx.gpu_device.stream(),
+        locks, keys, cache, output, 
+        missing_index_gpu, memcpy_buffer_gpu,
+        key_size, header_size, alloc_size,
+        value_len, ways, cache_num, miss_count));  */
+      
     cudaLaunchKernel(
-      (void *)GatherMissingEmbedding<K, V>,
-      (miss_count + block_dim - 1) / block_dim,
-      block_dim,
-      args, 0, NULL);  
+        (void *)GatherMissingEmbedding<K, V>,
+        (miss_count + block_dim - 1) / block_dim,
+        block_dim,
+        args, 0, ctx.gpu_device.stream()); 
   
   }
 
-  void Insert(K key, ValuePtr<V>* value_ptr) override {
-    do {
-      Status s = SingleTierStorage<K, V>::kv_->Insert(key, value_ptr);
-      if (s.ok()) {
-        break;
-      } else {
-        value_ptr->Destroy(SingleTierStorage<K, V>::alloc_);
-        delete value_ptr;
+  void Restore(const K* keys,
+              int64 value_len,
+              int size,
+              V *memcpy_buffer_gpu){
+    int block_dim = 128;
+      void* args[] = {
+          (void*)&locks,
+          (void*)&keys,
+          (void*)&cache,
+          (void*)&memcpy_buffer_gpu,
+          (void*)&key_size,
+          (void*)&header_size,
+          (void*)&alloc_size,
+          (void*)&value_len,
+          (void*)&ways,
+          (void*)&cache_num,
+          (void*)&size};
+
+    cudaLaunchKernel(
+        (void *)RestoreEmbedding<K, V>,
+        (size + block_dim - 1) / block_dim,
+        block_dim,
+        args, 0, NULL); 
+  }
+
+  void PrintCache(){
+    char *cpu_cache; 
+    cpu_cache = (char *)malloc(alloc_size * cache_size);
+    cudaMemcpy(cpu_cache, cache, alloc_size * cache_size, cudaMemcpyDeviceToHost);
+    
+    char *base_ptr;
+    int *freq_ptr;
+    K *key_ptr;
+    V *value_ptr;
+    for(int i = 0; i < cache_size; i++){
+      base_ptr = cpu_cache + alloc_size * i;
+      key_ptr = reinterpret_cast<K *>(base_ptr);
+      freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+      value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
+      std::cout << "key:" << *key_ptr << std::endl;
+      std::cout << "[";
+      for(int j = 0; j < 10; j++){
+        std::cout << value_ptr[j] << ",";
       }
-    } while (!(SingleTierStorage<K, V>::kv_->Lookup(key, &value_ptr)).ok());
+      std::cout << "]" << std::endl;
+    }
+    free(cpu_cache);
   }
 
-  void Insert(K key, ValuePtr<V>** value_ptr, size_t alloc_len) override {
-    SingleTierStorage<K, V>::Insert(key, value_ptr, alloc_len);
-  }
-
-  Status TryInsert(K key, ValuePtr<V>* value_ptr) {
-    return SingleTierStorage<K, V>::kv_->Insert(key, value_ptr);
-  }
  public:
   friend class HbmDramStorage<K, V>;
   friend class SetAssociativeHbmDramStorage<K, V>;
@@ -737,6 +769,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   int cache_size, cache_num, ways;
   int *locks;
   char *cache;
+  Allocator* gpu_alloc_;
 };
 #endif // GOOGLE_CUDA
 

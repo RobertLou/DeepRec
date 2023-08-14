@@ -168,6 +168,81 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
     return Status::OK();
   }
 
+  void ImportToHbm(
+      K* ids, int64 size, int64 value_len, int64 emb_index) override {
+    V* memcpy_buffer_cpu = new V[size * value_len];
+    V** value_address = new V*[size];
+    V* memcpy_buffer_gpu =
+        (V*)gpu_alloc_->AllocateRaw(
+            Allocator::kAllocatorAlignment,
+            size * value_len * sizeof(V));
+    V* dev_value_address =
+        (V*)gpu_alloc_->AllocateRaw(
+            Allocator::kAllocatorAlignment,
+            size * sizeof(V*));
+    ValuePtr<V>** gpu_value_ptrs = new ValuePtr<V>*[size];
+    ValuePtr<V>** cpu_value_ptrs = new ValuePtr<V>*[size];
+    {
+      //Mutex with other Import Ops
+      mutex_lock l(memory_pool_mu_);
+      for (int64 i = 0; i < size; i++) {
+        dram_->Get(ids[i], &cpu_value_ptrs[i]);
+        gpu_value_ptrs[i] = hbm_->CreateValuePtr(value_len);
+        V* val_ptr = embedding_mem_pool_->Allocate();
+        gpu_value_ptrs[i]->SetPtr(val_ptr);
+        memcpy((char *)gpu_value_ptrs[i]->GetPtr(),
+               (char *)cpu_value_ptrs[i]->GetPtr(),
+               sizeof(FixedLengthHeader));
+      }
+    }
+    //Split from above for loop for minize the cost of mutex lock
+    //TODO: Speed up with intra parallelism
+    std::vector<ValuePtr<V>*> invalid_value_ptrs;
+    for (int64 i = 0; i < size; i++) {
+      /*
+      memcpy(memcpy_buffer_cpu + i * value_len,
+          cpu_value_ptrs[i]->GetValue(emb_index,
+              Storage<K, V>::GetOffset(emb_index)), value_len * sizeof(V));
+              */
+      Status s = hbm_->TryInsert(ids[i], gpu_value_ptrs[i]);
+      if (!s.ok()) {
+        invalid_value_ptrs.emplace_back(gpu_value_ptrs[i]);
+        hbm_->Get(ids[i], &gpu_value_ptrs[i]);
+      }
+      gpu_value_ptrs[i]->SetInitialized(emb_index);
+      value_address[i] = gpu_value_ptrs[i]->GetValue(
+          emb_index, Storage<K, V>::GetOffset(emb_index));
+    }
+    cudaMemcpy(memcpy_buffer_gpu, memcpy_buffer_cpu,
+        size * value_len * sizeof(V), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_value_address, value_address,
+        size * sizeof(V*), cudaMemcpyHostToDevice);
+    {
+      mutex_lock l(memory_pool_mu_);
+      embedding_mem_pool_->Deallocate(invalid_value_ptrs);
+    }
+    int block_dim = 128;
+      void* args[] = {
+          (void*)&dev_value_address,
+          (void*)&memcpy_buffer_gpu,
+          (void*)&value_len,
+          (void*)&size};
+
+    cudaLaunchKernel(
+          (void *)BatchUnpack<V>,
+          (size + block_dim - 1) / block_dim * value_len,
+          block_dim,
+          args, 0, NULL);
+    cudaDeviceSynchronize();
+
+    delete[] memcpy_buffer_cpu;
+    delete[] cpu_value_ptrs;
+    delete[] gpu_value_ptrs;
+    delete[] value_address;
+    gpu_alloc_->DeallocateRaw(dev_value_address);
+    gpu_alloc_->DeallocateRaw(memcpy_buffer_gpu);
+  }
+
   void CopyEmbeddingsFromCPUToGPU(
       int total, const K* keys,
       const std::list<int64>& copyback_cursor,

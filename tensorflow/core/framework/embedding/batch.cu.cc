@@ -231,7 +231,7 @@ __global__ void InitEmptyCache(char *cache, int key_size, int header_size, int a
     *freq_ptr = 0;
     
     for (int j = 0; j < value_len; j++){
-      value_ptr[j] = static_cast<V>(j);
+      value_ptr[j] = static_cast<V>(0);
     }
   }
 }
@@ -255,6 +255,9 @@ TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
 template<class K, class V>
 __global__ void DeviceInitEmbedding(int *locks, K *keys, char *cache, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
+  if(i < cache_num){
+    atomicExch(&locks[i], 0);
+  }
   if(i < limit){
     K key = keys[i];
     int cache_id = key % cache_num;
@@ -262,6 +265,7 @@ __global__ void DeviceInitEmbedding(int *locks, K *keys, char *cache, int key_si
     bool blocked = true;
     while(blocked) {
       if(0 == atomicCAS(&locks[cache_id], 0, 1)) {
+        __threadfence();
         for(int j = possible_place; j < possible_place + ways; j++){
           char *base_ptr = cache + alloc_size * j;
           K *key_ptr = reinterpret_cast<K *>(base_ptr);
@@ -276,6 +280,7 @@ __global__ void DeviceInitEmbedding(int *locks, K *keys, char *cache, int key_si
             break;
           }
         }
+        __threadfence();
         atomicExch(&locks[cache_id], 0);
         blocked = false;
       }
@@ -366,25 +371,30 @@ __global__ void GatherMissingEmbedding(int *locks, K* keys, char *cache, V *outp
 
     //Update Cache
     bool blocked = true;
-    int minFreq = 99999;
-    int minPlace = -1;
+    int min_freq;
+    int min_place;
     while(blocked) {
       if(0 == atomicCAS(&locks[cache_id], 0, 1)) {
         //Find minimum frequency as substitution place
+        __threadfence();
         char *base_ptr;
         int *freq_ptr;
         K *key_ptr;
         V *value_ptr;
+        base_ptr = cache;
+        freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+        min_freq = *freq_ptr;
+        min_place = possible_place;
         for(int j = possible_place; j < possible_place + ways; j++){
           base_ptr = cache + alloc_size * j;
           freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
-          if(*freq_ptr < minFreq){
-            minFreq = *freq_ptr;
-            minPlace = j;
+          if(*freq_ptr < min_freq){
+            min_freq = *freq_ptr;
+            min_place = j;
           }
         }
 
-        base_ptr = cache + alloc_size * minPlace;
+        base_ptr = cache + alloc_size * min_place;
         key_ptr = reinterpret_cast<K *>(base_ptr);
         freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
         value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
@@ -395,6 +405,7 @@ __global__ void GatherMissingEmbedding(int *locks, K* keys, char *cache, V *outp
         for(int j = 0; j < value_len; j++){
           value_ptr[j] = memcpy_buffer[i * value_len + j];
         }
+        __threadfence();
         atomicExch(&locks[cache_id], 0);
         blocked = false;
       }
@@ -404,6 +415,74 @@ __global__ void GatherMissingEmbedding(int *locks, K* keys, char *cache, V *outp
 
 #define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
    template __global__ void GatherMissingEmbedding<T1, T2>(int *, T1 *, char *, T2 *, int *, T2 *, int, int, int, int, int, int, int);
+
+#define REGISTER_KERNELS_ALL_TYPES(T2) \
+   REGISTER_KERNELS_ALL_INDEX(int32, T2) \
+   REGISTER_KERNELS_ALL_INDEX(int64, T2)
+
+
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
+
+#undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
+
+template<class K, class V>
+__global__ void RestoreEmbedding(int *locks, K* keys, char *cache, V* memcpy_buffer, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+  if(i < limit){
+    K key = keys[i];
+    int cache_id = key % cache_num;
+    int possible_place = cache_id * ways;
+
+    //Update Cache
+    bool blocked = true;
+    int min_freq;
+    int min_place;
+    while(blocked) {
+      if(0 == atomicCAS(&locks[cache_id], 0, 1)) {
+        //Find minimum frequency as substitution place
+        __threadfence();
+        char *base_ptr;
+        int *freq_ptr;
+        K *key_ptr;
+        V *value_ptr;
+        base_ptr = cache;
+        freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+        min_freq = *freq_ptr;
+        min_place = possible_place;
+        for(int j = possible_place; j < possible_place + ways; j++){
+          base_ptr = cache + alloc_size * j;
+          freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+          if(*freq_ptr < min_freq){
+            min_freq = *freq_ptr;
+            min_place = j;
+          }
+        }
+
+        base_ptr = cache + alloc_size * min_place;
+        key_ptr = reinterpret_cast<K *>(base_ptr);
+        freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+        value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
+
+        //substitute
+        *key_ptr = key;
+        *freq_ptr = 0;
+        for(int j = 0; j < value_len; j++){
+          value_ptr[j] = memcpy_buffer[i * value_len + j];
+        }
+        __threadfence();
+        atomicExch(&locks[cache_id], 0);
+        blocked = false;
+      }
+    }
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
+   template __global__ void RestoreEmbedding<T1, T2>(int *, T1 *, char *, T2 *, int, int, int, int, int, int, int);
 
 #define REGISTER_KERNELS_ALL_TYPES(T2) \
    REGISTER_KERNELS_ALL_INDEX(int32, T2) \
