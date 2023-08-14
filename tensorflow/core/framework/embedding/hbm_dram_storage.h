@@ -194,9 +194,11 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
     //TODO: Speed up with intra parallelism
     std::vector<ValuePtr<V>*> invalid_value_ptrs;
     for (int64 i = 0; i < size; i++) {
+      /*
       memcpy(memcpy_buffer_cpu + i * value_len,
           cpu_value_ptrs[i]->GetValue(emb_index,
               Storage<K, V>::GetOffset(emb_index)), value_len * sizeof(V));
+              */
       Status s = hbm_->TryInsert(ids[i], gpu_value_ptrs[i]);
       if (!s.ok()) {
         invalid_value_ptrs.emplace_back(gpu_value_ptrs[i]);

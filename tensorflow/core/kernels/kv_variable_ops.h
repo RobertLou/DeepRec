@@ -886,7 +886,7 @@ Status EVRestoreNoPartition(EmbeddingVar<K, V>* ev, BundleReader* reader,
     return st;
   }
   embedding::BatchCache<K>* cache_for_restore_hbm = nullptr;
-  if (ev->IsMultiLevel() && ev->IsUseHbm()) {
+  if (ev->IsMultiLevel() && ev->IsUseHbm() && !ev->IsSetAssociativeHbm()) {
     auto cache_strategy = ev->storage()->CacheStrategy();
     cache_for_restore_hbm = embedding::CacheFactory::Create<K>(
         cache_strategy, "hbm_restore_cache for " + tensor_key);
@@ -915,6 +915,9 @@ Status EVRestoreNoPartition(EmbeddingVar<K, V>* ev, BundleReader* reader,
   int64 tot_key_num = key_shape.dim_size(0);
   size_t value_unit_bytes = sizeof(V) *  value_shape.dim_size(1);
   std::string key_str = "|";
+
+  std::vector<K> set_associative_hbm_ids;
+
   while(tot_key_num > 0) {
     size_t read_key_num = std::min(
         std::min(buffer_size / sizeof(K),
@@ -980,6 +983,11 @@ Status EVRestoreNoPartition(EmbeddingVar<K, V>* ev, BundleReader* reader,
         restore_buff.value_buffer = tmp;
       }
       st = ev->Import(restore_buff, read_key_num, 1, 0, 1, false, device);
+      if(ev->IsSetAssociativeHbm()){
+        for(int i = 0; i < read_key_num; i++){
+          set_associative_hbm_ids.emplace_back(((K*)restore_buff.key_buffer)[i]);
+        }
+      }
       if (cache_for_restore_hbm) {
         cache_for_restore_hbm->update(
             (K*)restore_buff.key_buffer, read_key_num,
@@ -1028,6 +1036,11 @@ Status EVRestoreNoPartition(EmbeddingVar<K, V>* ev, BundleReader* reader,
         tot_key_filter_num -= read_key_num;
       }
     }
+  }
+
+  if(ev->IsSetAssociativeHbm()){
+    int64 num_of_hbm_ids = set_associative_hbm_ids.size();
+    ev->ImportToHbm(set_associative_hbm_ids.data(), num_of_hbm_ids);
   }
 
   if (cache_for_restore_hbm) {

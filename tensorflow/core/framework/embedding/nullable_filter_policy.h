@@ -209,6 +209,9 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
         LOG(INFO) << "skip EV key:" << *(key_buff + i);
         continue;
       }
+      if(ev_->IsSetAssociativeHbm()){
+        continue;
+      }
       ValuePtr<V>* value_ptr = nullptr;
       ev_->CreateKeyOnDram(key_buff[i], &value_ptr);
       if (config_.filter_freq !=0 || ev_->IsMultiLevel()
