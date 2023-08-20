@@ -220,15 +220,19 @@ TF_CALL_double(REGISTER_KERNELS_ALL_INDEX)
 #undef REGISTER_KERNELS_ALL_INDEX
 
 template<class K, class V>
-__global__ void InitEmptyCache(char *cache, int key_size, int header_size, int alloc_size, int value_len, int limit) {
+__global__ void InitEmptyCache(int *locks, char *cache, int key_size, int header_size, int alloc_size, int value_len, int cache_num, int limit) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+  if(i < cache_num){
+    locks[i] = 0;
+  }
   if(i < limit){
     char *base_ptr = cache + alloc_size * i;
     K *key_ptr = reinterpret_cast<K *>(base_ptr);
     int *freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
     V *value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
     *key_ptr = static_cast<K>(-1);
-    *freq_ptr = 0;
+    *freq_ptr = -1;
     
     for (int j = 0; j < value_len; j++){
       value_ptr[j] = static_cast<V>(0);
@@ -237,59 +241,7 @@ __global__ void InitEmptyCache(char *cache, int key_size, int header_size, int a
 }
 
 #define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
-   template __global__ void InitEmptyCache<T1, T2>(char *, int, int, int, int, int);
-
-#define REGISTER_KERNELS_ALL_TYPES(T2) \
-   REGISTER_KERNELS_ALL_INDEX(int32, T2) \
-   REGISTER_KERNELS_ALL_INDEX(int64, T2)
-
-
-TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_TYPES)
-TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
-TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
-
-
-#undef REGISTER_KERNELS_ALL_TYPES
-#undef REGISTER_KERNELS_ALL_INDEX
-
-template<class K, class V>
-__global__ void DeviceInitEmbedding(int *locks, K *keys, char *cache, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if(i < cache_num){
-    atomicExch(&locks[i], 0);
-  }
-  if(i < limit){
-    K key = keys[i];
-    int cache_id = key % cache_num;
-    int possible_place = cache_id * ways;
-    bool blocked = true;
-    while(blocked) {
-      if(0 == atomicCAS(&locks[cache_id], 0, 1)) {
-        __threadfence();
-        for(int j = possible_place; j < possible_place + ways; j++){
-          char *base_ptr = cache + alloc_size * j;
-          K *key_ptr = reinterpret_cast<K *>(base_ptr);
-          int *freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
-          V *value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
-          if(*key_ptr == -1){
-            *key_ptr = key;
-            for(int k = 0; k < value_len; k++){
-              value_ptr[k] = static_cast<V>(key);
-            }
-            *freq_ptr = 0;
-            break;
-          }
-        }
-        __threadfence();
-        atomicExch(&locks[cache_id], 0);
-        blocked = false;
-      }
-    }
-  }
-}
-
-#define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
-   template __global__ void DeviceInitEmbedding<T1, T2>(int *, T1 *, char *, int, int, int, int, int, int, int);
+   template __global__ void InitEmptyCache<T1, T2>(int*, char *, int, int, int, int, int, int);
 
 #define REGISTER_KERNELS_ALL_TYPES(T2) \
    REGISTER_KERNELS_ALL_INDEX(int32, T2) \

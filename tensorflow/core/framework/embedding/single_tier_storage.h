@@ -574,55 +574,26 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
     cache = (char *)gpu_alloc_->AllocateRaw(
         Allocator::kAllocatorAlignment,
         alloc_size * cache_size);
+    
+    locks = (int *)gpu_alloc_->AllocateRaw(
+        Allocator::kAllocatorAlignment,
+        cache_num * sizeof(int));
       
     int block_dim = 128;
       void* args[] = {
+          (void*)&locks,
           (void*)&cache,
           (void*)&key_size,
           (void*)&header_size,
           (void*)&alloc_size,
           (void*)&alloc_len,
+          (void*)&cache_num,
           (void*)&cache_size};
     cudaLaunchKernel(
       (void *)InitEmptyCache<K, V>,
       (cache_size + block_dim - 1) / block_dim,
       block_dim,
       args, 0, NULL);
-
-    locks = (int *)gpu_alloc_->AllocateRaw(
-        Allocator::kAllocatorAlignment,
-        cache_num * sizeof(int));
-
-    K *keys, *dev_keys;
-    keys = (K*) malloc(sizeof(K) * cache_size);
-    dev_keys = (K*) gpu_alloc_->AllocateRaw(
-        Allocator::kAllocatorAlignment,
-        sizeof(K) * cache_size);
-    for(int j = 0; j < cache_size; j++){
-      keys[j] = j + 3;
-    }
-    cudaMemcpy(dev_keys, keys, sizeof(K) * cache_size, cudaMemcpyHostToDevice);
-    
-      void* args2[] = {
-          (void*)&locks,
-          (void*)&dev_keys,
-          (void*)&cache,
-          (void*)&key_size,
-          (void*)&header_size,
-          (void*)&alloc_size,
-          (void*)&alloc_len,
-          (void*)&ways,
-          (void*)&cache_num,
-          (void*)&cache_size};
-    cudaLaunchKernel(
-      (void *)DeviceInitEmbedding<K, V>,
-      (cache_size + block_dim - 1) / block_dim,
-      block_dim,
-      args2, 0, NULL);
-    PrintCache();
-    free(keys);
-    gpu_alloc_->DeallocateRaw(dev_keys);
-   
   }
   
   void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,

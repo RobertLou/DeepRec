@@ -216,6 +216,8 @@ class Storage {
     restorer.RestoreCkpt(emb_config, device);
   };
 
+  virtual void InitSetAssociativeHbmDramStorage() {}
+  
  protected:
   virtual Status RestoreFeatures(int64 key_num, int bucket_num, int64 partition_id,
                                  int64 partition_num, int64 value_len, bool is_filter,
@@ -362,8 +364,6 @@ class Storage {
         partitioned_ckpt_data.ExportToCkpt(tensor_name, writer, value_len);
     return Status::OK();
   }
-
-  virtual void InitSetAssociativeHbmDramStorage() {}
 
  protected:
   int64 alloc_len_ = 0;

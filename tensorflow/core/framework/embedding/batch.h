@@ -64,10 +64,7 @@ __global__ void SparseApplyAdamWGPU(V** var, V** m, V** v,
     V weight_decay, int embedding_dim, long long int limit);
 
 template<class K, class V>
-__global__ void InitEmptyCache(char *cache, int keySize, int headerSize, int allocSize, int value_len, int limit);
-
-template<class K, class V>
-__global__ void DeviceInitEmbedding(int *, K *, char *, int, int, int, int, int, int, int);
+__global__ void InitEmptyCache(int *, char *, int, int, int, int, int, int);
 
 template<class K, class V>
 __global__ void GatherEmbedding(K*, char *, V *, int *, K *, int, int, int, int, int, int, int);

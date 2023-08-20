@@ -42,8 +42,11 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       : gpu_alloc_(gpu_alloc),
         MultiTierStorage<K, V>(sc, name) {
     hbm_ = new SetAssociativeHbmStorage<K, V>(sc, gpu_alloc, lc);
-    dram_ = new DramStorage<K, V>(sc, cpu_alloc, lc,
-        new LocklessHashMapCPU<K, V>(gpu_alloc));
+    StorageConfig storage_config = StorageConfig();
+    storage_config.layout_type = LayoutType::NORMAL_CONTIGUOUS;
+    dram_ = new DramStorage<K, V>(sc, cpu_alloc,
+                                  LayoutCreatorFactory::Create<V>(storage_config),
+                                  new LocklessHashMapCPU<K, V>(gpu_alloc));
   }
 
   ~SetAssociativeHbmDramStorage() override {
@@ -55,20 +58,6 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
   void InitSetAssociativeHbmDramStorage() override {
     hbm_->Init(gpu_alloc_, Storage<K, V>::alloc_len_);
-  
-    V* default_value;
-    default_value = (V *)malloc(sizeof(V) * Storage<K, V>::alloc_len_);
-    for(int i = 0; i < Storage<K, V>::alloc_len_; i++){
-      default_value[i] = static_cast<V>(i); 
-    }
-
-    for(int i = 0; i < 256; i++){
-      ValuePtr<V> *tmp_value_ptr = new NormalContiguousValuePtr<V>(ev_allocator(), Storage<K, V>::alloc_len_);
-      tmp_value_ptr->GetOrAllocate(ev_allocator(), Storage<K, V>::alloc_len_, default_value, 0, 0);
-      dram_->TryInsert(static_cast<K>(i), tmp_value_ptr);
-    }
-
-    free(default_value);
   } 
 
   Status Get(K key, ValuePtr<V>** value_ptr) override {
@@ -131,9 +120,6 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       hbm_->BatchGetMissing(
         ctx, keys, output, value_len, miss_count, missing_index_gpu, memcpy_buffer_gpu);
 
-
-      PrintGPUCache();
-
       delete []memcpy_buffer_cpu;
       gpu_alloc_->DeallocateRaw(memcpy_buffer_gpu);
       delete []missing_index_cpu;
@@ -148,15 +134,13 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
   }
 
-
   void Insert(K key, ValuePtr<V>** value_ptr,
-              size_t alloc_len) override {
-
-  }
-
-  void InsertToDram(K key, ValuePtr<V>** value_ptr,
-              int64 alloc_len) override {
-    dram_->Insert(key, value_ptr, alloc_len);
+              size_t alloc_len, bool to_dram = false) override {
+    if (to_dram) {
+      dram_->Insert(key, value_ptr, alloc_len);
+    } else {
+      //hbm_->Insert(key, value_ptr, alloc_len);
+    }
   }
 
   Status GetOrCreate(K key, ValuePtr<V>** value_ptr,
@@ -172,7 +156,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   }
 
 void ImportToHbm(
-      K* ids, int64 size, int64 value_len, int64 emb_index) override {
+      K* ids, int64 size, int64 value_len, int64 emb_index) {
     V* memcpy_buffer_cpu = new V[size * value_len];
     V* memcpy_buffer_gpu =
         (V*)gpu_alloc_->AllocateRaw(
@@ -193,7 +177,8 @@ void ImportToHbm(
     
     for (int64 i = 0; i < size; i++) {
       memcpy(memcpy_buffer_cpu + i * value_len,
-          cpu_value_ptrs[i]->GetValue(0, 0), value_len * sizeof(V));
+            cpu_value_ptrs[i]->GetValue(emb_index,
+            Storage<K, V>::GetOffset(emb_index)), value_len * sizeof(V));
     }
 
     cudaMemcpy(memcpy_buffer_gpu, memcpy_buffer_cpu,
@@ -273,14 +258,6 @@ void ImportToHbm(
     return false;
   }
 
-  void iterator_mutex_lock() override {
-    return;
-  }
-
-  void iterator_mutex_unlock() override {
-    return;
-  }
-
   Status GetSnapshot(std::vector<K>* key_list,
       std::vector<ValuePtr<V>* >* value_ptr_list) override {
     {
@@ -291,45 +268,6 @@ void ImportToHbm(
       mutex_lock l(*(dram_->get_mutex()));
       TF_CHECK_OK(dram_->GetSnapshot(key_list, value_ptr_list));
     }
-    return Status::OK();
-  }
-
-  int64 GetSnapshot(std::vector<K>* key_list,
-      std::vector<V* >* value_list,
-      std::vector<int64>* version_list,
-      std::vector<int64>* freq_list,
-      const EmbeddingConfig& emb_config,
-      FilterPolicy<K, V, EmbeddingVar<K, V>>* filter,
-      embedding::Iterator** it) override {
-    std::vector<ValuePtr<V>*> hbm_value_ptr_list, dram_value_ptr_list;
-    std::vector<K> temp_hbm_key_list, temp_dram_key_list;
-    // Get Snapshot of HBM storage
-    {
-      mutex_lock l(*(hbm_->get_mutex()));
-      TF_CHECK_OK(hbm_->GetSnapshot(&temp_hbm_key_list,
-                                    &hbm_value_ptr_list));
-    }
-    // Get Snapshot of DRAM storage.
-    {
-      mutex_lock l(*(dram_->get_mutex()));
-      TF_CHECK_OK(dram_->GetSnapshot(&temp_dram_key_list,
-                                     &dram_value_ptr_list));
-    }
-    *it = new HbmDramIterator<K, V>(temp_hbm_key_list,
-                                    temp_dram_key_list,
-                                    hbm_value_ptr_list,
-                                    dram_value_ptr_list,
-                                    Storage<K, V>::alloc_len_,
-                                    gpu_alloc_,
-                                    emb_config.emb_index);
-    // This return value is not the exact number of IDs
-    // because the two tables intersect.
-    return temp_hbm_key_list.size() + temp_dram_key_list.size();
-  }
-
-  Status Shrink(const ShrinkArgs& shrink_args) override {
-    hbm_->Shrink(shrink_args);
-    dram_->Shrink(shrink_args);
     return Status::OK();
   }
 
@@ -355,6 +293,69 @@ void ImportToHbm(
 
   }
 
+  Status Save(
+      const string& tensor_name,
+      const string& prefix,
+      BundleWriter* writer,
+      const EmbeddingConfig& emb_config,
+      ShrinkArgs& shrink_args,
+      int64 value_len,
+      V* default_value) override {
+    LOG(INFO) << "run here";
+  }
+
+  void Restore(const std::string& name_string,
+              const std::string& file_name_string,
+              int64 partition_id, int64 partition_num,
+              int64 value_len, bool is_incr, bool reset_version,
+              const EmbeddingConfig& emb_config,
+              const Eigen::GpuDevice* device,
+              BundleReader* reader, EmbeddingVar<K, V>* ev,
+              FilterPolicy<K, V, EmbeddingVar<K, V>>* filter) override {
+    CheckpointLoader<K, V> restorer(reinterpret_cast<Storage<K, V>*>(this),
+                              ev, filter, name_string, file_name_string,
+                              partition_id, partition_num,
+                              is_incr, reset_version, reader);
+    
+    restore_cache_ = CacheFactory::Create<K>(CacheStrategy::LFU, "ads");
+    restorer.RestoreCkpt(emb_config, device);
+    LOG(INFO) << MultiTierStorage<K, V>::cache_capacity_;
+    int64 num_of_hbm_ids =
+      std::min(MultiTierStorage<K, V>::cache_capacity_,
+      (int64)restore_cache_->size());
+    
+    if (num_of_hbm_ids > 0) {
+      K* hbm_ids = new K[num_of_hbm_ids];
+      int64* hbm_freqs = new int64[num_of_hbm_ids];
+      int64* hbm_versions = nullptr;
+      restore_cache_->get_cached_ids(hbm_ids, num_of_hbm_ids,
+                                                      hbm_versions, hbm_freqs);
+      ImportToHbm(hbm_ids, num_of_hbm_ids, value_len, emb_config.emb_index);
+
+      delete[] hbm_ids;
+      delete[] hbm_freqs;
+
+    }
+  }
+
+  Status RestoreFeatures(int64 key_num, int bucket_num, int64 partition_id,
+                         int64 partition_num, int64 value_len, bool is_filter,
+                         bool is_incr, const EmbeddingConfig& emb_config,
+                         const Eigen::GpuDevice* device,
+                         FilterPolicy<K, V, EmbeddingVar<K, V>>* filter,
+                         RestoreBuffer& restore_buff) override {
+    Status s = filter->Restore(key_num, bucket_num, partition_id,
+                               partition_num, value_len, is_filter,
+                               true/*to_dram*/, is_incr, restore_buff);
+
+    restore_cache_->update((K*)restore_buff.key_buffer, key_num,
+                                           (int64*)restore_buff.version_buffer,
+                                           (int64*)restore_buff.freq_buffer);
+    
+    return s;
+  }
+
+
  protected:
   void SetTotalDims(int64 total_dims) override {
     dram_->SetTotalDims(total_dims);
@@ -363,6 +364,7 @@ void ImportToHbm(
  private:
   SetAssociativeHbmStorage<K, V>* hbm_ = nullptr;
   DramStorage<K, V>* dram_ = nullptr;
+  BatchCache<K>* restore_cache_ = nullptr;
   EmbeddingMemoryPool<V>* embedding_mem_pool_ = nullptr;
   Allocator* gpu_alloc_;
   mutex memory_pool_mu_; //ensure thread safety of embedding_mem_pool_
