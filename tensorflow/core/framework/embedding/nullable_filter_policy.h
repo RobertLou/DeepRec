@@ -88,8 +88,31 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
                    const K* keys, V* output,
                    int64 num_of_keys,
                    V* default_value_ptr) override {
-    ev_->BatchLookupKey(ctx, keys, output, num_of_keys);
+    std::vector<ValuePtr<V>*> value_ptr_list(num_of_keys, nullptr);
+    int miss_count, *missing_index_cpu;
+    ev_->BatchLookupKey(ctx, keys, output, value_ptr_list.data(), num_of_keys, miss_count, missing_index_cpu);
+    std::vector<V*> embedding_ptr(num_of_keys, nullptr);
+    auto do_work = [this, value_ptr_list, &embedding_ptr, 
+                    default_value_ptr, missing_index_cpu]
+        (int64 start, int64 limit) {
+      for (int i = start; i < limit; i++) {
+        ValuePtr<V>* value_ptr = value_ptr_list[missing_index_cpu[i]];
+        if (value_ptr != nullptr) {
+          embedding_ptr[i] =
+              ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
+        } else {
+          embedding_ptr[i] = nullptr;
+        }
+      }
+    };
+    auto worker_threads = ctx.worker_threads;
+    Shard(worker_threads->num_threads,
+          worker_threads->workers, miss_count,
+          1000, do_work);
+    ev_->BatchGetMissing(ctx, keys, output, miss_count, 
+                         missing_index_cpu, embedding_ptr.data());
 
+    delete []missing_index_cpu;
   }
 
   void BatchLookupOrCreateKey(const EmbeddingVarContext<GPUDevice>& ctx,

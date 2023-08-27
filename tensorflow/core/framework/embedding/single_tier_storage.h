@@ -558,8 +558,8 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   }
 
   ~SetAssociativeHbmStorage() override {
-    gpu_alloc_->DeallocateRaw(cache);
-    gpu_alloc_->DeallocateRaw(locks);
+    gpu_alloc_->DeallocateRaw(cache_);
+    gpu_alloc_->DeallocateRaw(locks_);
   }
 
   void Init(Allocator* alloc, int alloc_len) {
@@ -569,20 +569,19 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
     key_size = sizeof(K);
     header_size = sizeof(FixedLengthGPUHeader<K>);
     alloc_size = header_size + alloc_len * sizeof(V);
-    LOG(INFO) << alloc_size;
     gpu_alloc_ = alloc;
-    cache = (char *)gpu_alloc_->AllocateRaw(
+    cache_ = (char *)gpu_alloc_->AllocateRaw(
         Allocator::kAllocatorAlignment,
         alloc_size * cache_size);
     
-    locks = (int *)gpu_alloc_->AllocateRaw(
+    locks_ = (int *)gpu_alloc_->AllocateRaw(
         Allocator::kAllocatorAlignment,
         cache_num * sizeof(int));
       
     int block_dim = 128;
       void* args[] = {
-          (void*)&locks,
-          (void*)&cache,
+          (void*)&locks_,
+          (void*)&cache_,
           (void*)&key_size,
           (void*)&header_size,
           (void*)&alloc_size,
@@ -616,7 +615,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
     int block_dim = 128;
       void* args[] = {
           (void*)&keys,
-          (void*)&cache,
+          (void*)&cache_,
           (void*)&output,
           (void*)&dev_miss_count,
           (void*)&dev_gather_status,
@@ -649,9 +648,9 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
               V *memcpy_buffer_gpu) {
     int block_dim = 128;
       void* args[] = {
-          (void*)&locks,
+          (void*)&locks_,
           (void*)&keys,
-          (void*)&cache,
+          (void*)&cache_,
           (void*)&output,
           (void*)&missing_index_gpu,
           (void*)&memcpy_buffer_gpu,
@@ -667,7 +666,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
         GatherMissingEmbedding<K, V>,
         (miss_count + block_dim - 1) / block_dim,
         block_dim, 0, ctx.gpu_device.stream(),
-        locks, keys, cache, output, 
+        locks_, keys, cache_, output, 
         missing_index_gpu, memcpy_buffer_gpu,
         key_size, header_size, alloc_size,
         value_len, ways, cache_num, miss_count));  */
@@ -686,9 +685,9 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
               V *memcpy_buffer_gpu){
     int block_dim = 128;
       void* args[] = {
-          (void*)&locks,
+          (void*)&locks_,
           (void*)&keys,
-          (void*)&cache,
+          (void*)&cache_,
           (void*)&memcpy_buffer_gpu,
           (void*)&key_size,
           (void*)&header_size,
@@ -708,7 +707,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   void PrintCache(){
     char *cpu_cache; 
     cpu_cache = (char *)malloc(alloc_size * cache_size);
-    cudaMemcpy(cpu_cache, cache, alloc_size * cache_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(cpu_cache, cache_, alloc_size * cache_size, cudaMemcpyDeviceToHost);
     
     char *base_ptr;
     int *freq_ptr;
@@ -738,8 +737,8 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
  private:
   int key_size, header_size, alloc_size;
   int cache_size, cache_num, ways;
-  int *locks;
-  char *cache;
+  int *locks_;
+  char *cache_;
   Allocator* gpu_alloc_;
 };
 #endif // GOOGLE_CUDA

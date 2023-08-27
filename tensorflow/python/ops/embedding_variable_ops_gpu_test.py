@@ -1106,7 +1106,6 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
         print(name, shape, ckpt_value)
     with self.test_session() as sess:
       saver.restore(sess, model_path)
-    print(checkpoint_directory)
 
 
   def testRestoreHBMandDRAM(self):
@@ -1122,8 +1121,7 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
       initializer=init_ops.ones_initializer(dtypes.int64),
       steps_to_live=5,
       ev_option = ev_option)
-    emb1 = embedding_ops.embedding_lookup(emb_var, math_ops.cast([1,2,3], dtypes.int64))
-    emb = emb1
+    emb = embedding_ops.embedding_lookup(emb_var, math_ops.cast([1,2,3,130,140], dtypes.int64))
     fun = math_ops.multiply(emb, 2.0, name='multiply')
     loss = math_ops.reduce_sum(fun, name='reduce_sum')
     gs = training_util.get_or_create_global_step()
@@ -1135,9 +1133,11 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     saver = saver = saver_module.Saver()
     checkpoint_directory = "/root/code/ckpt"
     model_path = os.path.join(checkpoint_directory, "model.ckpt")
-    with self.test_session() as sess:
+    graph = ops.get_default_graph()
+    with self.test_session(graph = graph) as sess:
       saver.restore(sess, model_path)
-    print(checkpoint_directory)
+      emb_val = sess.run(emb)
+      print(emb_val)
 
   def testEmbeddingVariableForHBMandDRAMLookup(self):
     print("testEmbeddingVariableForHBMandDRAMLookup")

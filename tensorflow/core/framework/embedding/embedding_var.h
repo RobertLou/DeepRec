@@ -193,9 +193,23 @@ class EmbeddingVar : public ResourceBase {
   void BatchLookupKey(const EmbeddingVarContext<GPUDevice>& ctx,
                       const K* keys,
                       V* output,
-                      int64 num_of_keys) {
-    storage_->BatchGet(ctx, keys, output, num_of_keys,
-                       ValueLen());
+                      ValuePtr<V>** value_ptr_list,
+                      int64 num_of_keys,
+                      int &miss_count,
+                      int *&missing_index_cpu) {
+    storage_->BatchGet(ctx, keys, output, value_ptr_list, num_of_keys,
+                       ValueLen(), miss_count, missing_index_cpu);
+  }
+
+  void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
+                       const K* keys,
+                       V* output,
+                       int &miss_count,
+                       int *&missing_index_cpu,
+                       V** memcpy_address){
+    storage_->BatchGetMissing(ctx, keys, output, miss_count, 
+                              missing_index_cpu, memcpy_address, 
+                              ValueLen());
   }
 
   Status LookupOrCreateKey(K key, ValuePtr<V>** value_ptr,

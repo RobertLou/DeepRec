@@ -87,8 +87,18 @@ class Storage {
   virtual void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
                         const K* key,
                         V* output,
+                        ValuePtr<V>** value_ptr_list,
                         int64 num_of_keys,
-                        int64 value_len) {}
+                        int64 value_len,
+                        int &miss_count,
+                        int* &missing_index_cpu) {}
+  virtual void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
+                       const K* keys,
+                       V* output,
+                      int &miss_count,
+                      int *&missing_index_cpu,
+                      V** memcpy_address,
+                      int64 value_len) {}
 #endif //GOOGLE_CUDA
   virtual Status Contains(K key) = 0;
   virtual void Insert(K key, ValuePtr<V>** value_ptr,

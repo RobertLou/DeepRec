@@ -58,6 +58,20 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
   void InitSetAssociativeHbmDramStorage() override {
     hbm_->Init(gpu_alloc_, Storage<K, V>::alloc_len_);
+
+    V* default_value;
+    default_value = (V *)malloc(sizeof(V) * Storage<K, V>::alloc_len_);
+    for(int i = 0; i < Storage<K, V>::alloc_len_; i++){
+      default_value[i] = static_cast<V>(i); 
+    }
+
+    for(int i = 128; i < 256; i++){
+      ValuePtr<V> *tmp_value_ptr = new NormalContiguousValuePtr<V>(ev_allocator(), Storage<K, V>::alloc_len_);
+      tmp_value_ptr->GetOrAllocate(ev_allocator(), Storage<K, V>::alloc_len_, default_value, 0, 0);
+      dram_->TryInsert(static_cast<K>(i), tmp_value_ptr);
+    }
+
+    free(default_value);
   } 
 
   Status Get(K key, ValuePtr<V>** value_ptr) override {
@@ -67,67 +81,87 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
                 const K* keys,
                 V* output,
+                ValuePtr<V>** value_ptr_list,
                 int64 num_of_keys,
-                int64 value_len) override {
-    int miss_count = 0;
+                int64 value_len,
+                int &miss_count,
+                int *&missing_index_cpu) override {
+    miss_count = 0;
     K *gather_status;
     gather_status = new K[num_of_keys];
     hbm_->BatchGet(
       ctx, keys, output, num_of_keys, value_len, miss_count, gather_status);
     LOG(INFO) << miss_count;
     if(miss_count > 0){
-      V *memcpy_buffer_cpu, *memcpy_buffer_gpu;
-      memcpy_buffer_cpu = new V[miss_count * value_len];
-      memcpy_buffer_gpu = (V*) gpu_alloc_->AllocateRaw(
-            Allocator::kAllocatorAlignment,
-            miss_count * value_len * sizeof(V));
-
-      int *missing_index_cpu, *missing_index_gpu;
       missing_index_cpu = new int[miss_count];
-      missing_index_gpu = (int *) gpu_alloc_->AllocateRaw(
-            Allocator::kAllocatorAlignment,
-            miss_count * sizeof(int));
-
+      mutex missing_index_mu;
       int missing_place = 0;
-      for(int i = 0; i < num_of_keys; i++){
-        if(gather_status[i] != 0){
-          missing_index_cpu[missing_place] = i;
-          ValuePtr<V> *tmp_value_ptr;
-          dram_->Get(gather_status[i], &tmp_value_ptr);
-          V* tmp_value;
-          tmp_value = tmp_value_ptr->GetValue(0, 0);
-          memcpy(memcpy_buffer_cpu + missing_place * value_len, tmp_value, value_len * sizeof(V));
-          missing_place++;
+    
+      auto do_work = [this, value_ptr_list, gather_status, 
+                     missing_index_cpu, &missing_index_mu, 
+                     &missing_place]
+        (int64 start, int64 limit) {
+        for (int64 i = start; i < limit; i++) {
+          if(gather_status[i] != 0){
+            mutex_lock l(missing_index_mu);
+            missing_index_cpu[missing_place] = i;
+            dram_->Get(gather_status[i], &value_ptr_list[i]);
+            missing_place++;
+          }
         }
-      }
+      };
+      auto worker_threads = ctx.worker_threads;
+      Shard(worker_threads->num_threads,
+            worker_threads->workers, num_of_keys,
+            1000, do_work);
+    }
+    delete []gather_status;
+  }
 
-      auto compute_stream = ctx.compute_stream;
-      auto event_mgr = ctx.event_mgr;
+  void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
+                       const K* keys,
+                       V* output,
+                      int &miss_count,
+                      int *&missing_index_cpu,
+                      V** memcpy_address,
+                      int64 value_len){
+    V *memcpy_buffer_cpu, *memcpy_buffer_gpu;
+    memcpy_buffer_cpu = new V[miss_count * value_len];
+    memcpy_buffer_gpu = (V*) gpu_alloc_->AllocateRaw(
+          Allocator::kAllocatorAlignment,
+          miss_count * value_len * sizeof(V));
 
-      DeviceMemoryBase memcpy_buffer_gpu_dst_ptr(
-          memcpy_buffer_gpu, miss_count * value_len * sizeof(V));
-      compute_stream->ThenMemcpy(
-          &memcpy_buffer_gpu_dst_ptr, memcpy_buffer_cpu, miss_count * value_len * sizeof(V));
-      SyncWithEventMgr(compute_stream, event_mgr);
+    int *missing_index_gpu;
+    missing_index_gpu = (int *) gpu_alloc_->AllocateRaw(
+          Allocator::kAllocatorAlignment,
+          miss_count * sizeof(int));
 
-      DeviceMemoryBase missing_index_gpu_dst_ptr(
-          missing_index_gpu, miss_count * sizeof(int));
-      compute_stream->ThenMemcpy(
-          &missing_index_gpu_dst_ptr, missing_index_cpu, miss_count * sizeof(int));
-      SyncWithEventMgr(compute_stream, event_mgr);
-
-      
-      hbm_->BatchGetMissing(
-        ctx, keys, output, value_len, miss_count, missing_index_gpu, memcpy_buffer_gpu);
-
-      delete []memcpy_buffer_cpu;
-      gpu_alloc_->DeallocateRaw(memcpy_buffer_gpu);
-      delete []missing_index_cpu;
-      gpu_alloc_->DeallocateRaw(missing_index_gpu);
+    for(int i = 0; i < miss_count; i++){
+      memcpy(memcpy_buffer_cpu + i * value_len, memcpy_address[i], value_len * sizeof(V));
     }
 
+    auto compute_stream = ctx.compute_stream;
+    auto event_mgr = ctx.event_mgr;
 
-    delete []gather_status;
+    DeviceMemoryBase memcpy_buffer_gpu_dst_ptr(
+        memcpy_buffer_gpu, miss_count * value_len * sizeof(V));
+    compute_stream->ThenMemcpy(
+        &memcpy_buffer_gpu_dst_ptr, memcpy_buffer_cpu, miss_count * value_len * sizeof(V));
+    SyncWithEventMgr(compute_stream, event_mgr);
+
+    DeviceMemoryBase missing_index_gpu_dst_ptr(
+        missing_index_gpu, miss_count * sizeof(int));
+    compute_stream->ThenMemcpy(
+        &missing_index_gpu_dst_ptr, missing_index_cpu, miss_count * sizeof(int));
+    SyncWithEventMgr(compute_stream, event_mgr);
+
+    
+    hbm_->BatchGetMissing(
+      ctx, keys, output, value_len, miss_count, missing_index_gpu, memcpy_buffer_gpu);
+
+    delete []memcpy_buffer_cpu;
+    gpu_alloc_->DeallocateRaw(memcpy_buffer_gpu);
+    gpu_alloc_->DeallocateRaw(missing_index_gpu);
   }
 
   void Insert(K key, ValuePtr<V>* value_ptr) override {
@@ -188,8 +222,6 @@ void ImportToHbm(
     
     hbm_->Restore(
         keys_gpu, value_len, size, memcpy_buffer_gpu);
-
-    PrintGPUCache();
 
     delete[] memcpy_buffer_cpu;
     delete[] cpu_value_ptrs;
