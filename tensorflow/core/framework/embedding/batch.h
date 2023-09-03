@@ -70,7 +70,7 @@ template<class K, class V>
 __global__ void GatherEmbedding(K*, char *, V *, int *, K *, int, int, int, int, int, int, int);
 
 template<class K, class V>
-__global__ void GatherMissingEmbedding(int *, K *, char *, V *, int *, V *, int, int, int, int, int, int, int);
+__global__ void GatherMissingEmbedding(int *, K *, char *, V *, V *, int *, V *, bool*, int, int, int, int, int, int, int);
 
 template<class K, class V>
 __global__ void RestoreEmbedding(int *, K *, char *, V *, int, int, int, int, int, int, int);

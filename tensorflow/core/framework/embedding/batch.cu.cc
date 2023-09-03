@@ -307,19 +307,29 @@ TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
 #undef REGISTER_KERNELS_ALL_INDEX
 
 template<class K, class V>
-__global__ void GatherMissingEmbedding(int *locks, K* keys, char *cache, V *output, int *miss_index, V* memcpy_buffer, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int miss_count){
+__global__ void GatherMissingEmbedding(int *locks, K* keys, char *cache, V *output, V* default_value_ptr, int *miss_index, 
+                                       V* memcpy_buffer, bool *initialize_status, int key_size, int header_size, int alloc_size, 
+                                       int value_len, int ways, int cache_num, int miss_count){
   int i = blockDim.x * blockIdx.x + threadIdx.x;
 
   if(i < miss_count){
     int index = miss_index[i];
+    
+    //Write to output
+    if(initialize_status[i]){
+      for(int j = 0; j < value_len; j++){
+        output[index * value_len + j] = default_value_ptr[j];
+      }
+    }
+    else{
+      for(int j = 0; j < value_len; j++){
+        output[index * value_len + j] = memcpy_buffer[i * value_len + j];
+      }
+    }
+
     K key = keys[index];
     int cache_id = key % cache_num;
     int possible_place = cache_id * ways;
-    
-    //Write to output
-    for(int j = 0; j < value_len; j++){
-      output[index * value_len + j] = memcpy_buffer[i * value_len + j];
-    }
 
     //Update Cache
     bool blocked = true;
@@ -366,7 +376,7 @@ __global__ void GatherMissingEmbedding(int *locks, K* keys, char *cache, V *outp
 }
 
 #define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
-   template __global__ void GatherMissingEmbedding<T1, T2>(int *, T1 *, char *, T2 *, int *, T2 *, int, int, int, int, int, int, int);
+   template __global__ void GatherMissingEmbedding<T1, T2>(int *, T1 *, char *, T2 *, T2 *, int *, T2 *, bool*, int, int, int, int, int, int, int);
 
 #define REGISTER_KERNELS_ALL_TYPES(T2) \
    REGISTER_KERNELS_ALL_INDEX(int32, T2) \

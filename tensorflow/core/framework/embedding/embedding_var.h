@@ -206,10 +206,12 @@ class EmbeddingVar : public ResourceBase {
                        V* output,
                        int &miss_count,
                        int *&missing_index_cpu,
-                       V** memcpy_address){
+                       V** memcpy_address,
+                       bool *initialize_status,
+                       V* default_value_ptr){
     storage_->BatchGetMissing(ctx, keys, output, miss_count, 
                               missing_index_cpu, memcpy_address, 
-                              ValueLen());
+                              initialize_status, default_value_ptr, ValueLen());
   }
 
   Status LookupOrCreateKey(K key, ValuePtr<V>** value_ptr,

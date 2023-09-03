@@ -92,27 +92,33 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
     int miss_count, *missing_index_cpu;
     ev_->BatchLookupKey(ctx, keys, output, value_ptr_list.data(), num_of_keys, miss_count, missing_index_cpu);
     std::vector<V*> embedding_ptr(num_of_keys, nullptr);
-    auto do_work = [this, value_ptr_list, &embedding_ptr, 
-                    default_value_ptr, missing_index_cpu]
-        (int64 start, int64 limit) {
-      for (int i = start; i < limit; i++) {
-        ValuePtr<V>* value_ptr = value_ptr_list[missing_index_cpu[i]];
-        if (value_ptr != nullptr) {
-          embedding_ptr[i] =
-              ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
-        } else {
-          embedding_ptr[i] = nullptr;
+    if(miss_count > 0){
+        bool *initialize_status = new bool[miss_count];
+        auto do_work = [this, value_ptr_list, &embedding_ptr, 
+                      default_value_ptr, missing_index_cpu,
+                      initialize_status]
+          (int64 start, int64 limit) {
+        for (int i = start; i < limit; i++) {
+          ValuePtr<V>* value_ptr = value_ptr_list[missing_index_cpu[i]];
+          if (value_ptr != nullptr) {
+            embedding_ptr[i] =
+                ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
+                initialize_status[i] = 0;
+          } else {
+            embedding_ptr[i] = nullptr;
+            initialize_status[i] = 1;
+          }
         }
-      }
-    };
-    auto worker_threads = ctx.worker_threads;
-    Shard(worker_threads->num_threads,
-          worker_threads->workers, miss_count,
-          1000, do_work);
-    ev_->BatchGetMissing(ctx, keys, output, miss_count, 
-                         missing_index_cpu, embedding_ptr.data());
-
-    delete []missing_index_cpu;
+      };
+      auto worker_threads = ctx.worker_threads;
+      Shard(worker_threads->num_threads,
+            worker_threads->workers, miss_count,
+            1000, do_work);
+      ev_->BatchGetMissing(ctx, keys, output, miss_count, 
+                          missing_index_cpu, embedding_ptr.data(),
+                          initialize_status, default_value_ptr);
+      delete[] initialize_status;
+    }
   }
 
   void BatchLookupOrCreateKey(const EmbeddingVarContext<GPUDevice>& ctx,

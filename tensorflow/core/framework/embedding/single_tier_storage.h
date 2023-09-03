@@ -562,9 +562,9 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
     gpu_alloc_->DeallocateRaw(locks_);
   }
 
-  void Init(Allocator* alloc, int alloc_len) {
+  void Init(Allocator* alloc, int cache_capacity, int alloc_len) {
     ways = 8;
-    cache_size = 128;
+    cache_size = cache_capacity;
     cache_num = cache_size / ways;
     key_size = sizeof(K);
     header_size = sizeof(FixedLengthGPUHeader<K>);
@@ -607,18 +607,13 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
         Allocator::kAllocatorAlignment,
         sizeof(int));
 
-    K *dev_gather_status;
-    dev_gather_status = (K *)gpu_alloc_->AllocateRaw(
-        Allocator::kAllocatorAlignment,
-        sizeof(K) * num_of_keys);
-
     int block_dim = 128;
       void* args[] = {
           (void*)&keys,
           (void*)&cache_,
           (void*)&output,
           (void*)&dev_miss_count,
-          (void*)&dev_gather_status,
+          (void*)&gather_status,
           (void*)&key_size,
           (void*)&header_size,
           (void*)&alloc_size,
@@ -632,10 +627,8 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       block_dim,
       args, 0, ctx.gpu_device.stream());
     cudaMemcpy(&miss_count, dev_miss_count, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(gather_status, dev_gather_status, sizeof(K) * num_of_keys, cudaMemcpyDeviceToHost);
 
     gpu_alloc_->DeallocateRaw(dev_miss_count);
-    gpu_alloc_->DeallocateRaw(dev_gather_status);
   }
 
 
@@ -645,15 +638,19 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
               int64 value_len,
               int &miss_count,
               int *missing_index_gpu,
-              V *memcpy_buffer_gpu) {
+              V *memcpy_buffer_gpu,
+              bool *initialize_status_gpu,
+              V* default_value_ptr) {
     int block_dim = 128;
       void* args[] = {
           (void*)&locks_,
           (void*)&keys,
           (void*)&cache_,
           (void*)&output,
+          (void*)&default_value_ptr,
           (void*)&missing_index_gpu,
           (void*)&memcpy_buffer_gpu,
+          (void*)&initialize_status_gpu,
           (void*)&key_size,
           (void*)&header_size,
           (void*)&alloc_size,

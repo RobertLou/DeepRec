@@ -50,6 +50,15 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   }
 
   ~SetAssociativeHbmDramStorage() override {
+    if(gather_status_ != nullptr){
+      cudaFreeHost(gather_status_);
+    }
+    if(missing_index_ != nullptr){
+      cudaFreeHost(missing_index_);
+    }
+    if(memcpy_buffer_ != nullptr){
+      cudaFreeHost(memcpy_buffer_);
+    }
     delete hbm_;
     delete dram_;
   }
@@ -57,21 +66,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   TF_DISALLOW_COPY_AND_ASSIGN(SetAssociativeHbmDramStorage);
 
   void InitSetAssociativeHbmDramStorage() override {
-    hbm_->Init(gpu_alloc_, Storage<K, V>::alloc_len_);
-
-    V* default_value;
-    default_value = (V *)malloc(sizeof(V) * Storage<K, V>::alloc_len_);
-    for(int i = 0; i < Storage<K, V>::alloc_len_; i++){
-      default_value[i] = static_cast<V>(i); 
-    }
-
-    for(int i = 128; i < 256; i++){
-      ValuePtr<V> *tmp_value_ptr = new NormalContiguousValuePtr<V>(ev_allocator(), Storage<K, V>::alloc_len_);
-      tmp_value_ptr->GetOrAllocate(ev_allocator(), Storage<K, V>::alloc_len_, default_value, 0, 0);
-      dram_->TryInsert(static_cast<K>(i), tmp_value_ptr);
-    }
-
-    free(default_value);
+    hbm_->Init(gpu_alloc_, MultiTierStorage<K, V>::cache_capacity_, Storage<K, V>::alloc_len_);
   } 
 
   Status Get(K key, ValuePtr<V>** value_ptr) override {
@@ -87,25 +82,40 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
                 int &miss_count,
                 int *&missing_index_cpu) override {
     miss_count = 0;
-    K *gather_status;
-    gather_status = new K[num_of_keys];
+    if(num_of_keys > batch_size_){
+      batch_size_ = num_of_keys;
+      if(gather_status_ != nullptr){
+        cudaFreeHost(gather_status_);
+      }
+      cudaHostAlloc((void **)&gather_status_, batch_size_ * sizeof(K), cudaHostAllocDefault);
+
+      if(missing_index_ != nullptr){
+        cudaFreeHost(missing_index_);
+      }
+      cudaHostAlloc((void **)&missing_index_, batch_size_ * sizeof(int), cudaHostAllocWriteCombined);
+
+      if(memcpy_buffer_ != nullptr){
+        cudaFreeHost(memcpy_buffer_);
+      }
+      cudaHostAlloc((void **)&memcpy_buffer_, batch_size_ * value_len * sizeof(int), cudaHostAllocWriteCombined);
+    }
+    
     hbm_->BatchGet(
-      ctx, keys, output, num_of_keys, value_len, miss_count, gather_status);
-    LOG(INFO) << miss_count;
+      ctx, keys, output, num_of_keys, value_len, miss_count, gather_status_);
+    //LOG(INFO) << miss_count;
     if(miss_count > 0){
-      missing_index_cpu = new int[miss_count];
+      missing_index_cpu = missing_index_;
       mutex missing_index_mu;
       int missing_place = 0;
     
-      auto do_work = [this, value_ptr_list, gather_status, 
-                     missing_index_cpu, &missing_index_mu, 
-                     &missing_place]
+      auto do_work = [this, value_ptr_list, missing_index_cpu, 
+                      &missing_index_mu, &missing_place]
         (int64 start, int64 limit) {
         for (int64 i = start; i < limit; i++) {
-          if(gather_status[i] != 0){
+          if(gather_status_[i] != 0){
             mutex_lock l(missing_index_mu);
             missing_index_cpu[missing_place] = i;
-            dram_->Get(gather_status[i], &value_ptr_list[i]);
+            dram_->Get(gather_status_[i], &value_ptr_list[i]);
             missing_place++;
           }
         }
@@ -115,7 +125,6 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
             worker_threads->workers, num_of_keys,
             1000, do_work);
     }
-    delete []gather_status;
   }
 
   void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
@@ -124,44 +133,35 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
                       int &miss_count,
                       int *&missing_index_cpu,
                       V** memcpy_address,
+                      bool *initialize_status,
+                      V* default_value_ptr,
                       int64 value_len){
-    V *memcpy_buffer_cpu, *memcpy_buffer_gpu;
-    memcpy_buffer_cpu = new V[miss_count * value_len];
-    memcpy_buffer_gpu = (V*) gpu_alloc_->AllocateRaw(
-          Allocator::kAllocatorAlignment,
-          miss_count * value_len * sizeof(V));
 
-    int *missing_index_gpu;
-    missing_index_gpu = (int *) gpu_alloc_->AllocateRaw(
+    bool *initialize_status_gpu;
+    initialize_status_gpu = (bool *) gpu_alloc_->AllocateRaw(
           Allocator::kAllocatorAlignment,
-          miss_count * sizeof(int));
+          miss_count * sizeof(bool));
 
     for(int i = 0; i < miss_count; i++){
-      memcpy(memcpy_buffer_cpu + i * value_len, memcpy_address[i], value_len * sizeof(V));
+      if(!initialize_status[i]){
+        memcpy(memcpy_buffer_ + i * value_len, memcpy_address[i], value_len * sizeof(V));
+      }
     }
 
     auto compute_stream = ctx.compute_stream;
     auto event_mgr = ctx.event_mgr;
 
-    DeviceMemoryBase memcpy_buffer_gpu_dst_ptr(
-        memcpy_buffer_gpu, miss_count * value_len * sizeof(V));
+    DeviceMemoryBase initialize_status_gpu_dst_ptr(
+        initialize_status_gpu, miss_count * sizeof(bool));
     compute_stream->ThenMemcpy(
-        &memcpy_buffer_gpu_dst_ptr, memcpy_buffer_cpu, miss_count * value_len * sizeof(V));
+        &initialize_status_gpu_dst_ptr, initialize_status, miss_count * sizeof(bool));
     SyncWithEventMgr(compute_stream, event_mgr);
-
-    DeviceMemoryBase missing_index_gpu_dst_ptr(
-        missing_index_gpu, miss_count * sizeof(int));
-    compute_stream->ThenMemcpy(
-        &missing_index_gpu_dst_ptr, missing_index_cpu, miss_count * sizeof(int));
-    SyncWithEventMgr(compute_stream, event_mgr);
-
     
     hbm_->BatchGetMissing(
-      ctx, keys, output, value_len, miss_count, missing_index_gpu, memcpy_buffer_gpu);
+      ctx, keys, output, value_len, miss_count, missing_index_cpu, 
+      memcpy_buffer_, initialize_status_gpu, default_value_ptr);
 
-    delete []memcpy_buffer_cpu;
-    gpu_alloc_->DeallocateRaw(memcpy_buffer_gpu);
-    gpu_alloc_->DeallocateRaw(missing_index_gpu);
+    gpu_alloc_->DeallocateRaw(initialize_status_gpu);
   }
 
   void Insert(K key, ValuePtr<V>* value_ptr) override {
@@ -191,11 +191,8 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
 void ImportToHbm(
       K* ids, int64 size, int64 value_len, int64 emb_index) {
-    V* memcpy_buffer_cpu = new V[size * value_len];
-    V* memcpy_buffer_gpu =
-        (V*)gpu_alloc_->AllocateRaw(
-            Allocator::kAllocatorAlignment,
-            size * value_len * sizeof(V));
+    V* memcpy_buffer;
+    cudaHostAlloc((void **)&memcpy_buffer, size * value_len * sizeof(V), cudaHostAllocWriteCombined);
     K* keys_gpu =
         (K*)gpu_alloc_->AllocateRaw(
             Allocator::kAllocatorAlignment,
@@ -210,23 +207,20 @@ void ImportToHbm(
     }
     
     for (int64 i = 0; i < size; i++) {
-      memcpy(memcpy_buffer_cpu + i * value_len,
+      memcpy(memcpy_buffer + i * value_len,
             cpu_value_ptrs[i]->GetValue(emb_index,
             Storage<K, V>::GetOffset(emb_index)), value_len * sizeof(V));
     }
 
-    cudaMemcpy(memcpy_buffer_gpu, memcpy_buffer_cpu,
-        size * value_len * sizeof(V), cudaMemcpyHostToDevice);
     cudaMemcpy(keys_gpu, ids,
         size * sizeof(K), cudaMemcpyHostToDevice);
     
     hbm_->Restore(
-        keys_gpu, value_len, size, memcpy_buffer_gpu);
+        keys_gpu, value_len, size, memcpy_buffer);
 
-    delete[] memcpy_buffer_cpu;
-    delete[] cpu_value_ptrs;
     gpu_alloc_->DeallocateRaw(keys_gpu);
-    gpu_alloc_->DeallocateRaw(memcpy_buffer_gpu);
+    cudaFreeHost(memcpy_buffer);
+    delete[] cpu_value_ptrs;
   }
 
   void PrintGPUCache(){
@@ -366,6 +360,7 @@ void ImportToHbm(
 
       delete[] hbm_ids;
       delete[] hbm_freqs;
+      delete restore_cache_;
 
     }
   }
@@ -401,6 +396,10 @@ void ImportToHbm(
   Allocator* gpu_alloc_;
   mutex memory_pool_mu_; //ensure thread safety of embedding_mem_pool_
   const int copyback_flag_offset_bits_ = 60;
+  int64 batch_size_ = -1;
+  K *gather_status_ = nullptr;
+  int *missing_index_ = nullptr;
+  V* memcpy_buffer_ = nullptr;
 };
 } // embedding
 } // tensorflow

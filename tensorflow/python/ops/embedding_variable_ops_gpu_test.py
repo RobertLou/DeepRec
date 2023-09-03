@@ -9,6 +9,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import time
 
 from tensorflow.python.platform import googletest
 from tensorflow.python.framework import ops
@@ -1067,19 +1068,27 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
 
   def testSaveHBMandDRAM(self):
     print("testSaveHBMandDRAM")
+    with open("/root/code/HBM_DRAM/dataset/ad_feature_cate_id/restore_keys.txt","r") as f:
+      lines = f.readlines()
+      lines = [int(line.strip()) for line in lines]
+    print(lines)
+    batch_list = [lines[i:i + 512] for i in range(0, len(lines), 512)]
+    print(len(batch_list))
     with ops.device("/gpu:0"):
       storage_option = variables.StorageOption(
                   storage_type=config_pb2.StorageType.HBM_DRAM,
-                  storage_size=[1024 * 1024])
+                  storage_size=[1024 * 256])
       ev_option = variables.EmbeddingVariableOption(
                                 storage_option=storage_option)
       emb_var = variable_scope.get_embedding_variable("var_1",
-            embedding_dim = 10,
-            initializer=init_ops.ones_initializer(dtypes.int64),
+            embedding_dim = 16,
+            initializer=init_ops.ones_initializer(dtypes.float32),
             steps_to_live=5,
             ev_option = ev_option)
       var = variable_scope.get_variable("var", [10, 10])
-    emb1 = embedding_ops.embedding_lookup(emb_var, math_ops.cast([1,2,3], dtypes.int64))
+    ids = array_ops.placeholder(dtypes.int64, name="ids")
+    emb1 = embedding_ops.embedding_lookup(emb_var, ids)
+    #emb1 = embedding_ops.embedding_lookup(emb_var, math_ops.cast([1,2,3], dtypes.int64))
     #emb2 = embedding_ops.embedding_lookup(var, math_ops.cast([1,2,3], dtypes.int64))
     emb = emb1
     fun = math_ops.multiply(emb, 2.0, name='multiply')
@@ -1092,24 +1101,37 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     saver = saver = saver_module.Saver()
     
     checkpoint_directory = self.get_temp_dir()
+    #checkpoint_directory = "/root/code/ckpt/cate_id_model"
     model_path = os.path.join(checkpoint_directory, "model.ckpt")
     with self.test_session() as sess:
       sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_VAR_OPS))
       sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_SLOT_OPS))
       sess.run([init])
       saver.save(sess, model_path)
-      sess.run([train_op])
-      sess.run([train_op])
+      #sess.run([train_op])
+      #sess.run([train_op])     
+
+      for i in range(2):
+        for j in range(0,len(batch_list)):
+          sess.run([train_op], feed_dict={'ids:0': batch_list[j]}) 
       saver.save(sess, model_path)
       for name, shape in checkpoint_utils.list_variables(model_path):
         ckpt_value = checkpoint_utils.load_variable(model_path, name)
         print(name, shape, ckpt_value)
     with self.test_session() as sess:
       saver.restore(sess, model_path)
+      emb_val = sess.run(emb, feed_dict={'ids:0': batch_list[0]})
+      print(emb_val)
 
 
   def testRestoreHBMandDRAM(self):
     print("testRestoreHBMandDRAM")
+    with open("/root/code/HBM_DRAM/dataset/ad_feature_cate_id/lookup_keys.txt","r") as f:
+      lines = f.readlines()
+      lines = [int(line.strip()) for line in lines]
+    batch_list = [lines[i:i + 512] for i in range(0, len(lines), 512)]
+    print(len(batch_list))
+    print(batch_list[0])
     with ops.device("/gpu:0"):
       storage_option = variables.StorageOption(
                   storage_type=config_pb2.StorageType.SET_ASSOCIATIVE_HBM_DRAM,
@@ -1117,27 +1139,30 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
       ev_option = variables.EmbeddingVariableOption(
                                 storage_option=storage_option)
       emb_var = variable_scope.get_embedding_variable("var_1",
-      embedding_dim = 10,
-      initializer=init_ops.ones_initializer(dtypes.int64),
+      embedding_dim = 16,
+      initializer=init_ops.ones_initializer(dtypes.float32),
       steps_to_live=5,
       ev_option = ev_option)
-    emb = embedding_ops.embedding_lookup(emb_var, math_ops.cast([1,2,3,130,140], dtypes.int64))
-    fun = math_ops.multiply(emb, 2.0, name='multiply')
-    loss = math_ops.reduce_sum(fun, name='reduce_sum')
-    gs = training_util.get_or_create_global_step()
-    opt = adagrad.AdagradOptimizer(0.1)
-    g_v = opt.compute_gradients(loss)
-    train_op = opt.apply_gradients(g_v, global_step=gs)
-    init = variables.global_variables_initializer()
-
+    ids = array_ops.placeholder(dtypes.int64, name="ids")
+    emb = embedding_ops.embedding_lookup(emb_var, ids)
+    #emb = embedding_ops.embedding_lookup(emb_var, math_ops.cast([0,1,2,5,6,7,8,9,10,11], dtypes.int64))
+  
     saver = saver = saver_module.Saver()
-    checkpoint_directory = "/root/code/ckpt"
+    #checkpoint_directory = "/root/code/ckpt/"
+    checkpoint_directory = "/root/code/ckpt/cate_id_model/"
     model_path = os.path.join(checkpoint_directory, "model.ckpt")
     graph = ops.get_default_graph()
     with self.test_session(graph = graph) as sess:
+      t1 = time.time()
       saver.restore(sess, model_path)
-      emb_val = sess.run(emb)
-      print(emb_val)
+      t2 = time.time()
+      print(t2 - t1)
+      t1 = time.time()
+      for i in range(0,len(batch_list)):
+        emb_val = sess.run([emb], feed_dict={'ids:0': batch_list[i]}) 
+        #print(emb_val)
+      t2 = time.time()
+      print(t2 - t1)
 
   def testEmbeddingVariableForHBMandDRAMLookup(self):
     print("testEmbeddingVariableForHBMandDRAMLookup")

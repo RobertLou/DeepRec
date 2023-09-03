@@ -98,6 +98,8 @@ class Storage {
                       int &miss_count,
                       int *&missing_index_cpu,
                       V** memcpy_address,
+                      bool *initialize_status,
+                      V* default_value_ptr,
                       int64 value_len) {}
 #endif //GOOGLE_CUDA
   virtual Status Contains(K key) = 0;
