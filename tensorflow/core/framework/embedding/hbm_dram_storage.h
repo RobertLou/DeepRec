@@ -83,12 +83,42 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
     std::vector<std::list<int64>>
         copyback_cursor_list(num_worker_threads + 1);
 
+    std::ostringstream oss;
+    oss << std::this_thread::get_id();
+    std::string threadIdStr = oss.str();
+
+    std::string fileloc1 = "/root/code/DeepRec/time/LookupAll" + threadIdStr + ".txt";
+    std::string fileloc2 = "/root/code/DeepRec/time/getmissing" + threadIdStr + ".txt";
+    std::string fileloc3 = "/root/code/DeepRec/time/missnum" + threadIdStr + ".txt";
+
+    std::ofstream time_file1;
+    std::ofstream time_file2;
+    std::ofstream time_file3;
+
+    time_file1.open(fileloc1, std::ios::app);
+    time_file2.open(fileloc2, std::ios::app);
+    time_file3.open(fileloc3, std::ios::app);
+    
+    timespec tStart, tEnd;
+
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
     BatchGetValuePtrs(ctx, keys, value_ptr_list, num_of_keys,
                       copyback_cursor_list);
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
 
+    time_file3 << copyback_cursor_list[0].size() << std::endl;
+
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
     CopyEmbeddingsFromDramToHbm(
         ctx, keys, value_ptr_list, copyback_cursor_list[0],
         value_len);
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file2 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+
+    time_file1.close();
+    time_file2.close();
+    time_file3.close();
   }
 
   void Insert(K key, ValuePtr<V>* value_ptr) override {
@@ -444,6 +474,10 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
     Status s = filter->Restore(key_num, bucket_num, partition_id,
                                partition_num, value_len, is_filter,
                                true/*to_dram*/, is_incr, restore_buff);
+
+    for(int i = 0; i < key_num; i++){
+     ((int64*)restore_buff.freq_buffer)[i]+=1;
+    }
 
     MultiTierStorage<K, V>::cache_->update((K*)restore_buff.key_buffer, key_num,
                                            (int64*)restore_buff.version_buffer,

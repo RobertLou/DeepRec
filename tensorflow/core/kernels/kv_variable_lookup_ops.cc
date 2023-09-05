@@ -19,6 +19,10 @@ limitations under the License.
 #define EIGEN_USE_GPU
 #endif
 
+#include <time.h>
+#include <fstream>
+#include <sstream> 
+
 #include "tensorflow/core/framework/bounds_check.h"
 #include "tensorflow/core/framework/embedding/cache.h"
 #include "tensorflow/core/framework/embedding/config.pb.h"
@@ -364,6 +368,17 @@ class KvResourceGatherGPUOp : public OpKernel {
     Tensor* out = nullptr;
     OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
 
+    std::ostringstream oss;
+    oss << std::this_thread::get_id();
+    std::string threadIdStr = oss.str();
+
+    std::string fileloc = "/root/code/DeepRec/time/total" + threadIdStr + ".txt";
+    std::ofstream time_file;
+	  time_file.open(fileloc, std::ios::app);
+	  
+    timespec tStart, tEnd;
+
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
     if (N > 0) {
       auto out_flat = out->shaped<TValue, 2>({N, out->NumElements() / N});
       TValue* out_base = &out_flat(0, 0);
@@ -429,6 +444,9 @@ class KvResourceGatherGPUOp : public OpKernel {
         }
       }
     }
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+    time_file.close();
   }
 
   private:

@@ -81,6 +81,22 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
                 int64 value_len,
                 int &miss_count,
                 int *&missing_index_cpu) override {
+    std::ostringstream oss;
+    oss << std::this_thread::get_id();
+    std::string threadIdStr = oss.str();
+
+    std::string fileloc1 = "/root/code/DeepRec/time/HBMlookup" + threadIdStr + ".txt";
+    std::string fileloc2 = "/root/code/DeepRec/time/DRAMlookup" + threadIdStr + ".txt";
+
+    std::ofstream time_file1;
+    std::ofstream time_file2;
+
+    time_file1.open(fileloc1, std::ios::app);
+    time_file2.open(fileloc2, std::ios::app);
+
+    timespec tStart, tEnd;
+
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
     miss_count = 0;
     if(num_of_keys > batch_size_){
       batch_size_ = num_of_keys;
@@ -102,7 +118,12 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     
     hbm_->BatchGet(
       ctx, keys, output, num_of_keys, value_len, miss_count, gather_status_);
+
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+
     //LOG(INFO) << miss_count;
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
     if(miss_count > 0){
       missing_index_cpu = missing_index_;
       mutex missing_index_mu;
@@ -125,6 +146,11 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
             worker_threads->workers, num_of_keys,
             1000, do_work);
     }
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file2 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+
+    time_file1.close();
+    time_file2.close();
   }
 
   void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
@@ -374,6 +400,10 @@ void ImportToHbm(
     Status s = filter->Restore(key_num, bucket_num, partition_id,
                                partition_num, value_len, is_filter,
                                true/*to_dram*/, is_incr, restore_buff);
+
+    for(int i = 0; i < key_num; i++){
+     ((int64*)restore_buff.freq_buffer)[i]+=1;
+    }
 
     restore_cache_->update((K*)restore_buff.key_buffer, key_num,
                                            (int64*)restore_buff.version_buffer,
