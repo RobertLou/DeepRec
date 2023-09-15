@@ -121,31 +121,46 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
-
-    //LOG(INFO) << miss_count;
+    
     clock_gettime(CLOCK_MONOTONIC, &tStart);
     if(miss_count > 0){
       missing_index_cpu = missing_index_;
-      mutex missing_index_mu;
-      int missing_place = 0;
+
+      int num_worker_threads = ctx.worker_threads->num_threads;
+      IntraThreadCopyIdAllocator thread_copy_id_alloc(num_worker_threads);
+      uint64 main_thread_id = Env::Default()->GetCurrentThreadId();
+
+      std::vector<std::list<int>> missing_index_list(num_worker_threads + 1);
     
-      auto do_work = [this, value_ptr_list, missing_index_cpu, 
-                      &missing_index_mu, &missing_place]
+      auto do_work = [this, value_ptr_list, &missing_index_list,
+                      &thread_copy_id_alloc, main_thread_id]
         (int64 start, int64 limit) {
+        int copy_id =
+            thread_copy_id_alloc.GetCopyIdOfThread(main_thread_id);
         for (int64 i = start; i < limit; i++) {
           if(gather_status_[i] != 0){
-            mutex_lock l(missing_index_mu);
-            missing_index_cpu[missing_place] = i;
+            missing_index_list[copy_id].emplace_back(i);
             dram_->Get(gather_status_[i], &value_ptr_list[i]);
-            missing_place++;
           }
         }
       };
+
       auto worker_threads = ctx.worker_threads;
       Shard(worker_threads->num_threads,
             worker_threads->workers, num_of_keys,
-            1000, do_work);
+            (int64)(200.0 * miss_count / num_of_keys), 
+            do_work);
+
+      for (int i = 1; i < worker_threads->num_threads + 1; i++) {
+        if (missing_index_list[i].size()>0) {
+          missing_index_list[0].splice(missing_index_list[0].end(),
+                                        missing_index_list[i]);
+        }
+      }
+
+      std::copy(missing_index_list[0].cbegin(), missing_index_list[0].cend(), missing_index_cpu);
     }
+
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		time_file2 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
 

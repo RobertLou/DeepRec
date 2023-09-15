@@ -256,7 +256,7 @@ TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
 #undef REGISTER_KERNELS_ALL_TYPES
 #undef REGISTER_KERNELS_ALL_INDEX
 
-template<class K, class V>
+/* template<class K, class V>
 __global__ void GatherEmbedding(K* keys, char *cache, V *output, int *miss_count, K *gather_status, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
   int j;
@@ -285,6 +285,47 @@ __global__ void GatherEmbedding(K* keys, char *cache, V *output, int *miss_count
       
     }
     if(j == possible_place + ways){
+      atomicAdd(miss_count, 1);
+    }
+  }
+} */
+
+template<class K, class V>
+__global__ void GatherEmbedding(K* keys, char *cache, V *output, int *miss_count, K *gather_status, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+  int j;
+  if (i == 0){
+    *miss_count = 0;
+  }
+  if(i < limit){
+    int key_index = i / value_len;
+    int embedding_index = i % value_len;
+    K key = keys[key_index];
+    int cache_id = key % cache_num;
+    int possible_place = cache_id * ways;
+    if(embedding_index == 0){
+      gather_status[key_index] = key;
+    }
+    for(j = possible_place; j < possible_place + ways; j++){
+      char *base_ptr = cache + alloc_size * j;
+      K *key_ptr = reinterpret_cast<K *>(base_ptr);
+      int *freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
+      V *value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
+
+      if(*key_ptr == key){
+        output[i] = value_ptr[embedding_index];
+
+        if(embedding_index == 0){
+          gather_status[key_index] = 0;
+          atomicAdd(freq_ptr, 1);
+        }
+        
+        break;
+      }
+      
+    }
+
+    if(embedding_index == 0 && j == possible_place + ways){
       atomicAdd(miss_count, 1);
     }
   }

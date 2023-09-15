@@ -608,6 +608,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
         sizeof(int));
 
     int block_dim = 128;
+    int limit = num_of_keys * value_len;
       void* args[] = {
           (void*)&keys,
           (void*)&cache_,
@@ -620,10 +621,10 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
           (void*)&value_len,
           (void*)&ways,
           (void*)&cache_num,
-          (void*)&num_of_keys};
+          (void*)&limit};
     cudaLaunchKernel(
       (void *)GatherEmbedding<K, V>,
-      (num_of_keys + block_dim - 1) / block_dim,
+      (limit + block_dim - 1) / block_dim,
       block_dim,
       args, 0, ctx.gpu_device.stream());
     cudaMemcpy(&miss_count, dev_miss_count, sizeof(int), cudaMemcpyDeviceToHost);
