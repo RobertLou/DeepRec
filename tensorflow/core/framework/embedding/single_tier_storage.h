@@ -560,6 +560,12 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   ~SetAssociativeHbmStorage() override {
     gpu_alloc_->DeallocateRaw(cache_);
     gpu_alloc_->DeallocateRaw(locks_);
+
+    gpu_alloc_->DeallocateRaw(keys_);
+    gpu_alloc_->DeallocateRaw(vals_);
+    gpu_alloc_->DeallocateRaw(slot_counter_);
+    gpu_alloc_->DeallocateRaw(global_counter_);
+    gpu_alloc_->DeallocateRaw(set_mutex_);
   }
 
   void Init(Allocator* alloc, int cache_capacity, int alloc_len) {
@@ -593,6 +599,49 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       (cache_size + block_dim - 1) / block_dim,
       block_dim,
       args, 0, NULL);
+
+    LOG(INFO) << cache_capacity;
+    LOG(INFO) << sizeof(slabset);
+    num_slot_ = cache_capacity;
+
+    capacity_in_set_ = num_slot_ / (SET_ASSOCIATIVITY * WARP_SIZE);
+    embedding_vec_size_ = alloc_len;
+
+    // Allocate GPU memory for cache
+    keys_ = (slabset *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(slabset) * capacity_in_set_);
+    vals_ = (V *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(V) * embedding_vec_size_ * num_slot_);
+    slot_counter_ = (int *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(int) * num_slot_);
+    global_counter_ = (int *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(int));
+
+    // Allocate GPU memory for set mutex
+    set_mutex_ = (int *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(int) * capacity_in_set_);
+
+    const K empty_key = -1;
+
+    // Initialize the cache, set all entry to unused <K,V>
+      void* args2[] = {
+          (void*)&keys_,
+          (void*)&slot_counter_,
+          (void*)&global_counter_,
+          (void*)&num_slot_,
+          (void*)&empty_key,
+          (void*)&set_mutex_,
+          (void*)&capacity_in_set_};
+    cudaLaunchKernel(
+      (void *)init_cache<K>,
+      ((num_slot_ - 1) / BLOCK_SIZE_) + 1,
+      BLOCK_SIZE_,
+      args2, 0, NULL);
   }
   
   void BatchGet(const EmbeddingVarContext<GPUDevice>& ctx,
@@ -700,10 +749,37 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
         (size + block_dim - 1) / block_dim,
         block_dim,
         args, 0, NULL); 
+
+
+    // Try to insert the <k,v> paris into the cache as long as there are unused slot
+    // Then replace the <k,v> pairs into the cache
+    const int task_per_warp_tile = 1;
+    const int keys_per_block = (BLOCK_SIZE_ / WARP_SIZE) * task_per_warp_tile;
+    const int grid_size = ((size - 1) / keys_per_block) + 1;
+
+    void* args2[] = {
+      (void*)&keys,
+      (void*)&memcpy_buffer_gpu,
+      (void*)&value_len,
+      (void*)&size,
+      (void*)&keys_,
+      (void*)&vals_,
+      (void*)&slot_counter_,
+      (void*)&set_mutex_,
+      (void*)&global_counter_,
+      (void*)&capacity_in_set_,
+      (void*)&task_per_warp_tile};
+
+    cudaLaunchKernel(
+      (void *)insert_replace_kernel<K, V>,
+      grid_size,
+      BLOCK_SIZE_,
+      args2, 0, NULL); 
+    PrintCache();
   }
 
   void PrintCache(){
-    char *cpu_cache; 
+/*     char *cpu_cache; 
     cpu_cache = (char *)malloc(alloc_size * cache_size);
     cudaMemcpy(cpu_cache, cache_, alloc_size * cache_size, cudaMemcpyDeviceToHost);
     
@@ -723,13 +799,44 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       }
       std::cout << "]" << std::endl;
     }
-    free(cpu_cache);
+    free(cpu_cache); */
+
+    cudaDeviceSynchronize();
+    slabset* h_keys = nullptr;
+    V* h_vals = nullptr;
+    h_keys = (slabset *)malloc(sizeof(slabset) * capacity_in_set_);
+    h_vals = (V *)malloc(sizeof(V) * embedding_vec_size_ * num_slot_);
+
+    cudaMemcpy(h_keys, keys_, sizeof(slabset) * capacity_in_set_, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_vals, vals_, sizeof(V) * embedding_vec_size_ * num_slot_, cudaMemcpyDeviceToHost);
+    for(int i = 0; i < 4; i++){
+      for(int j = 0; j < SET_ASSOCIATIVITY; j++){
+        for(int k = 0; k < WARP_SIZE; k++){
+          K key = h_keys[i].set_[j].slab_[k];
+          int val_index = ((i * SET_ASSOCIATIVITY + j) * WARP_SIZE + k) * embedding_vec_size_;
+          if(key != -1 && key % capacity_in_set_ != i){
+            LOG(INFO) << "wrong!!!!!";
+          }
+          std::cout << "key:" << key << std::endl;
+          std::cout << "[";
+          for(int m = 0; m < 10; m++){
+            std::cout << h_vals[val_index + m] << ",";
+          }
+          std::cout << "]" << std::endl;
+        }
+      }
+    }
+
+    free(h_keys);
+    free(h_vals);
   }
 
  public:
   friend class HbmDramStorage<K, V>;
   friend class SetAssociativeHbmDramStorage<K, V>;
   friend class HbmDramSsdStorage<K, V>;
+
+  using slabset = slab_set<K>;
  protected:
   void SetTotalDims(int64 total_dims) override {}
  private:
@@ -737,6 +844,23 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   int cache_size, cache_num, ways;
   int *locks_;
   char *cache_;
+
+  static const size_t BLOCK_SIZE_ = 128;
+
+  slabset* keys_ = nullptr;
+  V* vals_ = nullptr;
+  int* slot_counter_ = nullptr;
+  int* global_counter_ = nullptr;
+
+  // Cache capacity
+  int capacity_in_set_;
+  int num_slot_;
+
+  // Embedding vector size
+  int embedding_vec_size_;
+
+  int* set_mutex_ = nullptr;
+  
   Allocator* gpu_alloc_;
 };
 #endif // GOOGLE_CUDA

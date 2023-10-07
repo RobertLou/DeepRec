@@ -75,6 +75,28 @@ __global__ void GatherMissingEmbedding(int *, K *, char *, V *, V *, int *, V *,
 template<class K, class V>
 __global__ void RestoreEmbedding(int *, K *, char *, V *, int, int, int, int, int, int, int);
 
+// slab for static slab list
+#define WARP_SIZE 32
+#define SET_ASSOCIATIVITY 2
+
+template <class K>
+struct static_slab {
+  K slab_[WARP_SIZE];
+};
+
+// Static slablist(slabset) for GPU Cache
+template <class K>
+struct slab_set {
+  static_slab<K> set_[SET_ASSOCIATIVITY];
+};
+
+template<class K>
+__global__ void init_cache(slab_set<K> *, int *, int *, const int, const K, int *, const int);
+
+template<class K, class V>
+__global__ void insert_replace_kernel(const K *, const V *, const int, const int, slab_set<K> *, \
+    V *, int *, int *, int *, const int, const int);
+
 }  // namespace tensorflow
 
 #endif  // GOOGLE_CUDA

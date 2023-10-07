@@ -15,8 +15,12 @@ limitations under the License.
 
 #if GOOGLE_CUDA
 
+#include <cooperative_groups.h>
+
 #include "tensorflow/core/framework/embedding/batch.h"
 #include "tensorflow/core/framework/register_types.h"
+
+namespace cg = cooperative_groups;
 
 namespace tensorflow {
 namespace embedding {
@@ -256,40 +260,6 @@ TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
 #undef REGISTER_KERNELS_ALL_TYPES
 #undef REGISTER_KERNELS_ALL_INDEX
 
-/* template<class K, class V>
-__global__ void GatherEmbedding(K* keys, char *cache, V *output, int *miss_count, K *gather_status, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-  int j;
-  if (i == 0){
-    *miss_count = 0;
-  }
-  if(i < limit){
-    K key = keys[i];
-    int cache_id = key % cache_num;
-    int possible_place = cache_id * ways;
-    gather_status[i] = key;
-    for(j = possible_place; j < possible_place + ways; j++){
-      char *base_ptr = cache + alloc_size * j;
-      K *key_ptr = reinterpret_cast<K *>(base_ptr);
-      int *freq_ptr = reinterpret_cast<int *>(base_ptr + key_size);
-      V *value_ptr = reinterpret_cast<V *>(base_ptr + header_size);
-
-      if(*key_ptr == key){
-        gather_status[i] = 0;
-        for(int k = 0; k < value_len; k++){
-          output[i * value_len + k] = value_ptr[k];
-        }
-        atomicAdd(freq_ptr, 1);
-        break;
-      }
-      
-    }
-    if(j == possible_place + ways){
-      atomicAdd(miss_count, 1);
-    }
-  }
-} */
-
 template<class K, class V>
 __global__ void GatherEmbedding(K* keys, char *cache, V *output, int *miss_count, K *gather_status, int key_size, int header_size, int alloc_size, int value_len, int ways, int cache_num, int limit){
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
@@ -499,6 +469,286 @@ TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
 #undef REGISTER_KERNELS_ALL_TYPES
 #undef REGISTER_KERNELS_ALL_INDEX
 
+template<class V>
+__device__ void warp_tile_copy(const int lane_idx,
+                                               const int emb_vec_size_in_float, V* d_dst,
+                                               const V* d_src) {
+#pragma unroll
+  for (int i = lane_idx; i < emb_vec_size_in_float; i += WARP_SIZE) {
+    d_dst[i] = d_src[i];
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T) \
+  template __device__ void warp_tile_copy<T>(const int, const int, T *, const T *);
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_INDEX)
+TF_CALL_int32(REGISTER_KERNELS_ALL_INDEX)
+TF_CALL_int64(REGISTER_KERNELS_ALL_INDEX)
+#undef REGISTER_KERNELS_ALL_INDEX
+
+// Will be called by multiple thread_block_tile((sub-)warp) on the same mutex
+// Expect only one thread_block_tile return to execute critical section at any time
+__forceinline__ __device__ void warp_lock_mutex(const cg::thread_block_tile<WARP_SIZE>& warp_tile,
+                                                 int& set_mutex) {
+  // The first thread of this (sub-)warp to acquire the lock
+  if (warp_tile.thread_rank() == 0) {
+    while (0 == atomicCAS((int*)&set_mutex, 1, 0))
+      ;
+  }
+  __threadfence();
+  warp_tile.sync();  // Synchronize the threads in the (sub-)warp. Execution barrier + memory fence
+}
+
+// The (sub-)warp holding the mutex will unlock the mutex after finishing the critical section on a
+// set Expect any following (sub-)warp that acquire the mutex can see its modification done in the
+// critical section
+__forceinline__ __device__ void warp_unlock_mutex(const cg::thread_block_tile<WARP_SIZE>& warp_tile,
+                                                   int& set_mutex) {
+  __threadfence();
+  warp_tile.sync();  // Synchronize the threads in the (sub-)warp. Execution barrier + memory fence
+  // The first thread of this (sub-)warp to release the lock
+  if (warp_tile.thread_rank() == 0) {
+    atomicExch((int*)&set_mutex, 1);
+  }
+}
+
+// The (sub-)warp doing all reduction to find the slot with min slot_counter
+// The slot with min slot_counter is the LR slot.
+__forceinline__ __device__ void warp_min_reduction(
+    const cg::thread_block_tile<WARP_SIZE>& warp_tile, int& min_slot_counter_val,
+    int& slab_distance, int& slot_distance) {
+  const int lane_idx = warp_tile.thread_rank();
+  slot_distance = lane_idx;
+
+  for (int i = (warp_tile.size() >> 1); i > 0; i = i >> 1) {
+    int input_slot_counter_val = warp_tile.shfl_xor(min_slot_counter_val, (int)i);
+    int input_slab_distance = warp_tile.shfl_xor(slab_distance, (int)i);
+    int input_slot_distance = warp_tile.shfl_xor(slot_distance, (int)i);
+
+    if (input_slot_counter_val == min_slot_counter_val) {
+      if (input_slab_distance == slab_distance) {
+        if (input_slot_distance < slot_distance) {
+          slot_distance = input_slot_distance;
+        }
+      } else if (input_slab_distance < slab_distance) {
+        slab_distance = input_slab_distance;
+        slot_distance = input_slot_distance;
+      }
+    } else if (input_slot_counter_val < min_slot_counter_val) {
+      min_slot_counter_val = input_slot_counter_val;
+      slab_distance = input_slab_distance;
+      slot_distance = input_slot_distance;
+    }
+  }
+}
+
+// Kernel to initialize the GPU cache
+// Init every entry of the cache with <unused_key, value> pair
+template <class K>
+__global__ void init_cache(slab_set<K>* keys, int* slot_counter,
+                           int* global_counter, const int num_slot,
+                           const K empty_key, int* set_mutex, const int capacity_in_set) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < num_slot) {
+    // Set the key of this slot to unused key
+    // Flatten the cache
+    K* key_slot = (K*)keys;
+    key_slot[idx] = empty_key;
+
+    // Clear the counter for this slot
+    slot_counter[idx] = 0;
+  }
+  // First CUDA thread clear the global counter
+  if (idx == 0) {
+    global_counter[idx] = 0;
+  }
+
+  // First capacity_in_set CUDA thread initialize mutex
+  if (idx < capacity_in_set) {
+    set_mutex[idx] = 1;
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T) \
+  template __global__ void init_cache<T>(slab_set<T> *, int *, int *, const int, const T, int *, const int);
+TF_CALL_int32(REGISTER_KERNELS_ALL_INDEX)
+TF_CALL_int64(REGISTER_KERNELS_ALL_INDEX)
+#undef REGISTER_KERNELS_ALL_INDEX
+
+// Kernel to insert or replace the <k,v> pairs into the cache
+template <class K, class V>
+__global__ void insert_replace_kernel(const K* d_keys, const V* d_values,
+                                      const int embedding_vec_size, const int len,
+                                      slab_set<K>* keys,  V* vals,
+                                      int* slot_counter,
+                                      int* set_mutex, int* global_counter,
+                                      const int capacity_in_set,
+                                      const int task_per_warp_tile) {
+  int empty_key = -1;
+  // Lane(thread) ID within a warp_tile
+  cg::thread_block_tile<WARP_SIZE> warp_tile =
+      cg::tiled_partition<WARP_SIZE>(cg::this_thread_block());
+  const int lane_idx = warp_tile.thread_rank();
+  // Warp tile global ID
+  const int warp_tile_global_idx =
+      (blockIdx.x * (blockDim.x / WARP_SIZE)) + warp_tile.meta_group_rank();
+  // The index of key for this thread
+  const int key_idx = (warp_tile_global_idx * task_per_warp_tile) + lane_idx;
+  // The assigned key for this lane(thread)
+  K key;
+  // The dst slabset and the dst slab inside this set
+  int src_set;
+  int src_slab;
+  // Active flag: whether current lane(thread) has unfinished task
+  bool active = false;
+  if (lane_idx < task_per_warp_tile) {
+    if (key_idx < len) {
+      active = true;
+      key = d_keys[key_idx];
+      src_set = key % capacity_in_set;
+      src_slab = key % SET_ASSOCIATIVITY;
+    }
+  }
+
+  // Lane participate in warp_tile ballot to produce warp-level work queue
+  unsigned active_mask = warp_tile.ballot(active);
+
+  // The warp-level outer loop: finish all the tasks within the work queue
+  while (active_mask != 0) {
+    // Next task in the work quere, start from lower index lane(thread)
+    int next_lane = __ffs(active_mask) - 1;
+    // Broadcast the task, the global index and the src slabset and slab to all lane in a warp_tile
+    K next_key = warp_tile.shfl(key, next_lane);
+    int next_idx = warp_tile.shfl(key_idx, next_lane);
+    int next_set = warp_tile.shfl(src_set, next_lane);
+    int next_slab = warp_tile.shfl(src_slab, next_lane);
+    int first_slab = next_slab;
+
+    // Counter to record how many slab have been searched
+    int counter = 0;
+
+    // Variable to keep the min slot counter during the probing
+    int max_int = 9999;
+    int max_slab_distance = 9999;
+    int min_slot_counter_val = max_int;
+    // Variable to keep the slab distance for slot with min counter
+    int slab_distance = max_slab_distance;
+    // Variable to keep the slot distance for slot with min counter within the slab
+    int slot_distance;
+    // Working queue before task started
+    const unsigned old_active_mask = active_mask;
+
+    // Lock the slabset before operating the slabset
+    warp_lock_mutex(warp_tile, set_mutex[next_set]);
+
+    // The warp-level inner loop: finish a single task in the work queue
+    while (active_mask == old_active_mask) {
+      // When all the slabs inside a slabset have been searched
+      // and no empty slots or target slots are found. Replace with LRU
+      if (counter >= SET_ASSOCIATIVITY) {
+        // (sub)Warp all-reduction, the reduction result store in all threads
+        warp_min_reduction(warp_tile, min_slot_counter_val,
+                                                        slab_distance, slot_distance);
+
+        // Calculate the position of LR slot
+        int target_slab = (first_slab + slab_distance) % SET_ASSOCIATIVITY;
+        int slot_index =
+            (next_set * SET_ASSOCIATIVITY + target_slab) * WARP_SIZE + slot_distance;
+
+        // Replace the LR slot
+        if (lane_idx == (int)next_lane) {
+          (( K*)(keys[next_set].set_[target_slab].slab_))[slot_distance] = key;
+          slot_counter[slot_index] = atomicAdd(global_counter, 0);
+        }
+
+        warp_tile_copy<V>(lane_idx, embedding_vec_size,
+                                  ( V*)(vals + slot_index * embedding_vec_size),
+                                  ( V*)(d_values + next_idx * embedding_vec_size));
+
+        // Replace complete, mark this task completed
+        if (lane_idx == (int)next_lane) {
+          active = false;
+        }
+
+        active_mask = warp_tile.ballot(active);
+        break;
+      }
+
+      // The warp_tile read out the slab
+      K read_key = (( K*)(keys[next_set].set_[next_slab].slab_))[lane_idx];
+
+      // Compare the slab data with the target key
+      int found_lane = __ffs(warp_tile.ballot(read_key == next_key)) - 1;
+
+      // If found target key, the insertion/replace is no longer needed.
+      // Refresh the slot, the task is completed
+      if (found_lane >= 0) {
+        int found_offset = (next_set * SET_ASSOCIATIVITY + next_slab) * WARP_SIZE + found_lane;
+        if (lane_idx == (int)next_lane) {
+          slot_counter[found_offset] = atomicAdd(global_counter, 0);
+          active = false;
+        }
+
+        active_mask = warp_tile.ballot(active);
+        break;
+      }
+
+      // Compare the slab data with empty key.
+      // If found empty key, do insertion,the task is complete
+      found_lane = __ffs(warp_tile.ballot(read_key == empty_key)) - 1;
+      if (found_lane >= 0) {
+        int found_offset = (next_set * SET_ASSOCIATIVITY + next_slab) * WARP_SIZE + found_lane;
+
+        if (lane_idx == (int)next_lane) {
+          (( K*)(keys[next_set].set_[next_slab].slab_))[found_lane] = key;
+          slot_counter[found_offset] = atomicAdd(global_counter, 0);
+        }
+
+        warp_tile_copy<V>(lane_idx, embedding_vec_size,
+                                  ( V*)(vals + found_offset * embedding_vec_size),
+                                  ( V*)(d_values + next_idx * embedding_vec_size));
+
+        if (lane_idx == (int)next_lane) {
+          active = false;
+        }
+
+        active_mask = warp_tile.ballot(active);
+        break;
+      }
+
+      // If no target or unused slot found in this slab,
+      // Refresh LR info, continue probing
+      int read_slot_counter =
+          slot_counter[(next_set * SET_ASSOCIATIVITY + next_slab) * WARP_SIZE + lane_idx];
+      if (read_slot_counter < min_slot_counter_val) {
+        min_slot_counter_val = read_slot_counter;
+        slab_distance = counter;
+      }
+
+      counter++;
+      next_slab = (next_slab + 1) % SET_ASSOCIATIVITY;
+    }
+
+    // Unlock the slabset after operating the slabset
+    warp_unlock_mutex(warp_tile, set_mutex[next_set]);
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
+   template __global__ void insert_replace_kernel<T1, T2>(const T1 *, const T2 *, const int, const int, \
+     slab_set<T1> *,  T2 *,  int *,  int *, int *, const int, const int);
+
+#define REGISTER_KERNELS_ALL_TYPES(T2) \
+   REGISTER_KERNELS_ALL_INDEX(int32, T2) \
+   REGISTER_KERNELS_ALL_INDEX(int64, T2)
+
+
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
+TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
+
+#undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
 
 }  // namespace tensorflow
 #endif  // GOOGLE_CUDA
