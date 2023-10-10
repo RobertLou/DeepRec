@@ -50,15 +50,6 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   }
 
   ~SetAssociativeHbmDramStorage() override {
-    if(gather_status_ != nullptr){
-      cudaFreeHost(gather_status_);
-    }
-    if(missing_index_ != nullptr){
-      cudaFreeHost(missing_index_);
-    }
-    if(memcpy_buffer_ != nullptr){
-      cudaFreeHost(memcpy_buffer_);
-    }
     delete hbm_;
     delete dram_;
   }
@@ -79,8 +70,9 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
                 ValuePtr<V>** value_ptr_list,
                 int64 num_of_keys,
                 int64 value_len,
-                int &miss_count,
-                int *&missing_index_cpu) override {
+                K *d_missing_keys,
+                int *d_missing_index,
+                int *d_missing_len) override {
     std::ostringstream oss;
     oss << std::this_thread::get_id();
     std::string threadIdStr = oss.str();
@@ -97,68 +89,31 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     timespec tStart, tEnd;
 
     clock_gettime(CLOCK_MONOTONIC, &tStart);
-    miss_count = 0;
-    if(num_of_keys > batch_size_){
-      batch_size_ = num_of_keys;
-      if(gather_status_ != nullptr){
-        cudaFreeHost(gather_status_);
-      }
-      cudaHostAlloc((void **)&gather_status_, batch_size_ * sizeof(K), cudaHostAllocDefault);
 
-      if(missing_index_ != nullptr){
-        cudaFreeHost(missing_index_);
-      }
-      cudaHostAlloc((void **)&missing_index_, batch_size_ * sizeof(int), cudaHostAllocWriteCombined);
-
-      if(memcpy_buffer_ != nullptr){
-        cudaFreeHost(memcpy_buffer_);
-      }
-      cudaHostAlloc((void **)&memcpy_buffer_, batch_size_ * value_len * sizeof(int), cudaHostAllocWriteCombined);
-    }
-    
     hbm_->BatchGet(
-      ctx, keys, output, num_of_keys, value_len, miss_count, gather_status_);
+      ctx, keys, output, num_of_keys, value_len, d_missing_index, d_missing_keys, d_missing_len);
 
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
-    
+
+    cudaStreamSynchronize(ctx.gpu_device.stream());
+    int miss_count = *d_missing_len;
+
     clock_gettime(CLOCK_MONOTONIC, &tStart);
     if(miss_count > 0){
-      missing_index_cpu = missing_index_;
-
       int num_worker_threads = ctx.worker_threads->num_threads;
-      IntraThreadCopyIdAllocator thread_copy_id_alloc(num_worker_threads);
-      uint64 main_thread_id = Env::Default()->GetCurrentThreadId();
-
-      std::vector<std::list<int>> missing_index_list(num_worker_threads + 1);
     
-      auto do_work = [this, value_ptr_list, &missing_index_list,
-                      &thread_copy_id_alloc, main_thread_id]
+      auto do_work = [this, d_missing_keys, value_ptr_list]
         (int64 start, int64 limit) {
-        int copy_id =
-            thread_copy_id_alloc.GetCopyIdOfThread(main_thread_id);
         for (int64 i = start; i < limit; i++) {
-          if(gather_status_[i] != 0){
-            missing_index_list[copy_id].emplace_back(i);
-            dram_->Get(gather_status_[i], &value_ptr_list[i]);
-          }
+            dram_->Get(d_missing_keys[i], &value_ptr_list[i]);
         }
       };
 
       auto worker_threads = ctx.worker_threads;
       Shard(worker_threads->num_threads,
-            worker_threads->workers, num_of_keys,
-            (int64)(200.0 * miss_count / num_of_keys), 
-            do_work);
-
-      for (int i = 1; i < worker_threads->num_threads + 1; i++) {
-        if (missing_index_list[i].size()>0) {
-          missing_index_list[0].splice(missing_index_list[0].end(),
-                                        missing_index_list[i]);
-        }
-      }
-
-      std::copy(missing_index_list[0].cbegin(), missing_index_list[0].cend(), missing_index_cpu);
+            worker_threads->workers, miss_count,
+            1000, do_work);
     }
 
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
@@ -169,40 +124,29 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   }
 
   void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
-                       const K* keys,
-                       V* output,
-                      int &miss_count,
-                      int *&missing_index_cpu,
-                      V** memcpy_address,
-                      bool *initialize_status,
-                      V* default_value_ptr,
-                      int64 value_len){
-
-    bool *initialize_status_gpu;
-    initialize_status_gpu = (bool *) gpu_alloc_->AllocateRaw(
-          Allocator::kAllocatorAlignment,
-          miss_count * sizeof(bool));
+              const K* missing_keys,
+              int* missing_index,
+              V* output,
+              int64 value_len,
+              int miss_count,
+              V **memcpy_address,
+              bool* initialize_status,
+              V *default_value_ptr){    
+    
+    V* memcpy_buffer_gpu;
+    cudaHostAlloc((void **)&memcpy_buffer_gpu, miss_count * value_len * sizeof(V), cudaHostAllocWriteCombined);
 
     for(int i = 0; i < miss_count; i++){
       if(!initialize_status[i]){
-        memcpy(memcpy_buffer_ + i * value_len, memcpy_address[i], value_len * sizeof(V));
+        memcpy(memcpy_buffer_gpu + i * value_len, memcpy_address[i], value_len * sizeof(V));
       }
     }
-
-    auto compute_stream = ctx.compute_stream;
-    auto event_mgr = ctx.event_mgr;
-
-    DeviceMemoryBase initialize_status_gpu_dst_ptr(
-        initialize_status_gpu, miss_count * sizeof(bool));
-    compute_stream->ThenMemcpy(
-        &initialize_status_gpu_dst_ptr, initialize_status, miss_count * sizeof(bool));
-    SyncWithEventMgr(compute_stream, event_mgr);
     
     hbm_->BatchGetMissing(
-      ctx, keys, output, value_len, miss_count, missing_index_cpu, 
-      memcpy_buffer_, initialize_status_gpu, default_value_ptr);
+      ctx, missing_keys, missing_index, output, value_len, miss_count, 
+      memcpy_buffer_gpu, initialize_status, default_value_ptr);
 
-    gpu_alloc_->DeallocateRaw(initialize_status_gpu);
+    cudaFreeHost(memcpy_buffer_gpu);
   }
 
   void Insert(K key, ValuePtr<V>* value_ptr) override {
@@ -441,10 +385,6 @@ void ImportToHbm(
   Allocator* gpu_alloc_;
   mutex memory_pool_mu_; //ensure thread safety of embedding_mem_pool_
   const int copyback_flag_offset_bits_ = 60;
-  int64 batch_size_ = -1;
-  K *gather_status_ = nullptr;
-  int *missing_index_ = nullptr;
-  V* memcpy_buffer_ = nullptr;
 };
 } // embedding
 } // tensorflow

@@ -136,21 +136,32 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
 
     clock_gettime(CLOCK_MONOTONIC, &tStart);
     std::vector<ValuePtr<V>*> value_ptr_list(num_of_keys, nullptr);
-    int miss_count, *missing_index_cpu;
-    ev_->BatchLookupKey(ctx, keys, output, value_ptr_list.data(), num_of_keys, miss_count, missing_index_cpu);
+    
+    K *missing_keys;
+    int *missing_index;
+    int *missing_len;
+
+    cudaHostAlloc((void **)&missing_keys, num_of_keys * sizeof(K), cudaHostAllocDefault);
+    cudaHostAlloc((void **)&missing_index, num_of_keys * sizeof(int), cudaHostAllocDefault);
+    cudaHostAlloc((void **)&missing_len, sizeof(int), cudaHostAllocDefault);
+
+    ev_->BatchLookupKey(ctx, keys, output, value_ptr_list.data(), num_of_keys, missing_keys, missing_index, missing_len);
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
 
+    cudaStreamSynchronize(ctx.gpu_device.stream());
+    int miss_count = *missing_len;
     if(miss_count > 0){
         clock_gettime(CLOCK_MONOTONIC, &tStart);
         std::vector<V*> embedding_ptr(num_of_keys, nullptr);
-        bool *initialize_status = new bool[miss_count];
+        bool *initialize_status;
+
+        cudaHostAlloc((void **)&initialize_status, sizeof(bool) * miss_count, cudaHostAllocDefault);
         auto do_work = [this, value_ptr_list, &embedding_ptr, 
-                      default_value_ptr, missing_index_cpu,
-                      initialize_status]
+                      default_value_ptr, initialize_status]
           (int64 start, int64 limit) {
         for (int i = start; i < limit; i++) {
-          ValuePtr<V>* value_ptr = value_ptr_list[missing_index_cpu[i]];
+          ValuePtr<V>* value_ptr = value_ptr_list[i];
           if (value_ptr != nullptr) {
             embedding_ptr[i] =
                 ev_->LookupOrCreateEmb(value_ptr, default_value_ptr);
@@ -169,13 +180,13 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
 		  time_file2 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
 
       clock_gettime(CLOCK_MONOTONIC, &tStart);
-      ev_->BatchGetMissing(ctx, keys, output, miss_count, 
-                          missing_index_cpu, embedding_ptr.data(),
+      ev_->BatchGetMissing(ctx, missing_keys, missing_index, output, 
+                          miss_count, embedding_ptr.data(),
                           initialize_status, default_value_ptr);
       clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		  time_file3 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
               
-      delete[] initialize_status;
+      cudaFreeHost(initialize_status);
     }
 
     time_file1.close();
@@ -184,6 +195,10 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
 
     miss_file << miss_count << std::endl;
     miss_file.close();
+
+    cudaFreeHost(missing_keys);
+    cudaFreeHost(missing_index);
+    cudaFreeHost(missing_len);
   }
 
   void BatchLookupOrCreateKey(const EmbeddingVarContext<GPUDevice>& ctx,

@@ -90,17 +90,18 @@ class Storage {
                         ValuePtr<V>** value_ptr_list,
                         int64 num_of_keys,
                         int64 value_len,
-                        int &miss_count,
-                        int* &missing_index_cpu) {}
+                        K *missing_keys,
+                        int *missing_index,
+                        int *missing_len) {}
   virtual void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
-                       const K* keys,
-                       V* output,
-                      int &miss_count,
-                      int *&missing_index_cpu,
-                      V** memcpy_address,
-                      bool *initialize_status,
-                      V* default_value_ptr,
-                      int64 value_len) {}
+                        const K* missing_keys,
+                        int* missing_index,
+                        V* output,
+                        int64 value_len,
+                        int miss_count,
+                        V **memcpy_address,
+                        bool* initialize_status,
+                        V *default_value_ptr) {}
 #endif //GOOGLE_CUDA
   virtual Status Contains(K key) = 0;
   virtual void Insert(K key, ValuePtr<V>** value_ptr,
