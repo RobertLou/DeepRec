@@ -1132,7 +1132,7 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     with ops.device("/gpu:0"):
       storage_option = variables.StorageOption(
                   storage_type=config_pb2.StorageType.SET_ASSOCIATIVE_HBM_DRAM,
-                  storage_size=[1048576 * 128 * 4])
+                  storage_size=[65536 * 128 * 4])
       ev_option = variables.EmbeddingVariableOption(
                                 storage_option=storage_option)
       emb_var = variable_scope.get_embedding_variable("var_1",
@@ -1156,6 +1156,7 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
       t1 = time.time()
       for i in range(0,len(batch_list)):
         emb_val = sess.run([emb], feed_dict={'ids:0': batch_list[i]})
+        #print(emb_val)
       t2 = time.time()
       print(t2 - t1)
 

@@ -63,18 +63,6 @@ __global__ void SparseApplyAdamWGPU(V** var, V** m, V** v,
     const V* g, V alpha, V beta1, V beta2, V epsilon,
     V weight_decay, int embedding_dim, long long int limit);
 
-template<class K, class V>
-__global__ void InitEmptyCache(int *, char *, int, int, int, int, int, int);
-
-template<class K, class V>
-__global__ void GatherEmbedding(K*, char *, V *, int *, K *, int, int, int, int, int, int, int);
-
-template<class K, class V>
-__global__ void GatherMissingEmbedding(int *, K *, char *, V *, V *, int *, V *, bool*, int, int, int, int, int, int, int);
-
-template<class K, class V>
-__global__ void RestoreEmbedding(int *, K *, char *, V *, int, int, int, int, int, int, int);
-
 // slab for static slab list
 #define WARP_SIZE 32
 #define SET_ASSOCIATIVITY 2
