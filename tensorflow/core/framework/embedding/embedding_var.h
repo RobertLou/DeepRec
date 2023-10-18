@@ -195,11 +195,12 @@ class EmbeddingVar : public ResourceBase {
                       V* output,
                       ValuePtr<V>** value_ptr_list,
                       int64 num_of_keys,
-                      K *missing_keys,
-                      int *missing_index,
-                      int *missing_len) {
+                      K* &missing_keys,
+                      int* &missing_index,
+                      int* &missing_len,
+                      int &miss_count) {
     storage_->BatchGet(ctx, keys, output, value_ptr_list, num_of_keys,
-                       ValueLen(), missing_keys, missing_index, missing_len);
+                       ValueLen(), missing_keys, missing_index, missing_len, miss_count);
   }
 
   void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,

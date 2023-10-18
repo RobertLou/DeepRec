@@ -90,9 +90,10 @@ class Storage {
                         ValuePtr<V>** value_ptr_list,
                         int64 num_of_keys,
                         int64 value_len,
-                        K *missing_keys,
-                        int *missing_index,
-                        int *missing_len) {}
+                        K* &missing_keys,
+                        int* &missing_index,
+                        int* &missing_len,
+                        int &miss_count) {}
   virtual void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
                         const K* missing_keys,
                         int* missing_index,

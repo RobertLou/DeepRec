@@ -614,9 +614,10 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
                 V* output,
                 int64 num_of_keys,
                 int64 value_len,
-                int *d_missing_index,
-                K *d_missing_keys,
-                int *d_missing_len) {
+                int* &d_missing_index,
+                K* &d_missing_keys,
+                int* &d_missing_len,
+                int &miss_count) {           
     // Update the global counter as user perform a new(most recent) read operation to the cache
     // Resolve distance overflow issue as well.
     void* args[] = {
@@ -666,7 +667,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
               bool* initialize_status,
               V *default_value_ptr) {
 
-    /*输出Missing到output*/
+    /*Copy missing embeddings to output*/
     void* args[] = {
       (void*)&output,
       (void*)&memcpy_buffer_gpu,
