@@ -434,7 +434,7 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
           active = false;
         }
 
-        warp_tile_copy(lane_idx, embedding_vec_size,
+        warp_tile_copy<V>(lane_idx, embedding_vec_size,
                                   (V*)(d_values + next_idx * embedding_vec_size),
                                   (V*)(vals + found_offset * embedding_vec_size));
 
