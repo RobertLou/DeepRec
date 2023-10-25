@@ -51,10 +51,12 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
   ~SetAssociativeHbmDramStorage() override {
     cudaFreeHost(d_missing_keys_buffer_);
-    //cudaFreeHost(d_missing_index_buffer_);
-    gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
     cudaFreeHost(d_missing_len_buffer_);
     cudaFreeHost(memcpy_buffer_gpu_);
+
+    gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
+    gpu_alloc_->DeallocateRaw(d_warp_missing_counter_);
+    gpu_alloc_->DeallocateRaw(d_prefix_sum_);
 
     delete hbm_;
     delete dram_;
@@ -99,28 +101,41 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
     if(batch_size_ < num_of_keys){
       cudaFreeHost(d_missing_keys_buffer_);
-      //cudaFreeHost(d_missing_index_buffer_);
-      gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
       cudaFreeHost(d_missing_len_buffer_);
       cudaFreeHost(memcpy_buffer_gpu_);
+      gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
+      gpu_alloc_->DeallocateRaw(d_warp_missing_counter_);
+      gpu_alloc_->DeallocateRaw(d_prefix_sum_);
 
       batch_size_ = num_of_keys;
 
       cudaHostAlloc((void **)&d_missing_keys_buffer_, batch_size_ * sizeof(K), cudaHostAllocDefault);
-      //cudaHostAlloc((void **)&d_missing_index_buffer_, batch_size_ * sizeof(int), cudaHostAllocDefault);
+      cudaHostAlloc((void **)&d_missing_len_buffer_, sizeof(int), cudaHostAllocDefault);
+      cudaHostAlloc((void **)&memcpy_buffer_gpu_, batch_size_ * value_len * sizeof(V), cudaHostAllocWriteCombined);
+
       d_missing_index_buffer_ =
           (int*)gpu_alloc_->AllocateRaw(
             Allocator::kAllocatorAlignment,
             batch_size_ * sizeof(int));
-      cudaHostAlloc((void **)&d_missing_len_buffer_, sizeof(int), cudaHostAllocDefault);
-      cudaHostAlloc((void **)&memcpy_buffer_gpu_, batch_size_ * value_len * sizeof(V), cudaHostAllocWriteCombined);   
+      d_warp_missing_counter_ =
+          (int*)gpu_alloc_->AllocateRaw(
+            Allocator::kAllocatorAlignment,
+            batch_size_ * sizeof(int));
+      d_prefix_sum_ =
+          (int*)gpu_alloc_->AllocateRaw(
+            Allocator::kAllocatorAlignment,
+            (batch_size_ + 1) * sizeof(int));
     }
     d_missing_index = d_missing_index_buffer_;
     d_missing_keys = d_missing_keys_buffer_;
     d_missing_len = d_missing_len_buffer_;
 
     hbm_->BatchGet(
-      ctx, keys, output, num_of_keys, value_len, d_missing_index, d_missing_keys, d_missing_len, miss_count);
+      ctx, keys, output, num_of_keys, value_len, d_warp_missing_counter_, d_missing_len);
+
+    hbm_->PrefixSum(ctx, d_warp_missing_counter_, d_prefix_sum_, num_of_keys);
+
+    hbm_->GetMissingKeysAndIndex(ctx, keys, d_prefix_sum_, d_missing_keys, d_missing_index, d_missing_len, num_of_keys);
 
     cudaStreamSynchronize(ctx.gpu_device.stream());
     miss_count = *d_missing_len;
@@ -166,9 +181,9 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       if(!initialize_status[i]){
         memcpy(memcpy_buffer_gpu_ + i * value_len, memcpy_address[i], value_len * sizeof(V));
       }
-      else{
+/*       else{
         LOG(INFO) << "error!";
-      }
+      } */
     }
     
     hbm_->BatchGetMissing(
@@ -419,6 +434,9 @@ void ImportToHbm(
   int* d_missing_index_buffer_ = nullptr;
   int* d_missing_len_buffer_ = nullptr;
   V* memcpy_buffer_gpu_ = nullptr;
+
+  int* d_warp_missing_counter_ = nullptr;
+  int* d_prefix_sum_ = nullptr;
 };
 } // embedding
 } // tensorflow

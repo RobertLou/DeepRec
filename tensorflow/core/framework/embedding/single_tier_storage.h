@@ -614,10 +614,8 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
                 V* output,
                 int64 num_of_keys,
                 int64 value_len,
-                int* &d_missing_index,
-                K* &d_missing_keys,
-                int* &d_missing_len,
-                int &miss_count) {           
+                int* d_warp_missing_counter,
+                int* d_missing_len) {           
     // Update the global counter as user perform a new(most recent) read operation to the cache
     // Resolve distance overflow issue as well.
     void* args[] = {
@@ -638,9 +636,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       (void*)&num_of_keys,
       (void*)&output,
       (void*)&value_len,
-      (void*)&d_missing_index,
-      (void*)&d_missing_keys,
-      (void*)&d_missing_len,
+      (void*)&d_warp_missing_counter,
       (void*)&global_counter_,
       (void*)&slot_counter_,
       (void*)&capacity_in_set_,
@@ -654,6 +650,55 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       grid_size,
       BLOCK_SIZE_,
       args2, 0, ctx.gpu_device.stream());
+  }
+
+  void PrefixSum(const EmbeddingVarContext<GPUDevice>& ctx,
+                 int* d_warp_missing_counter,
+                 int* d_prefix_sum,
+                 int size){
+    void* args[] = {
+      (void*)&d_warp_missing_counter,
+      (void*)&d_prefix_sum,
+      (void*)&size};
+
+    cudaLaunchKernel(
+      (void *)sequential_scan_kernel,
+      1,
+      1,
+      args, 0, ctx.gpu_device.stream()); 
+
+    cudaStreamSynchronize(ctx.gpu_device.stream());
+    if(temp_observe == 0){
+      temp_observe++;
+      int prefix_sum[4096];
+      cudaMemcpy(prefix_sum, d_prefix_sum, sizeof(int) * 2048, cudaMemcpyDeviceToHost);
+      for(int i = 0; i < 128; i++){
+        LOG(INFO) << prefix_sum[i];
+      }
+    }
+  }
+
+  void GetMissingKeysAndIndex(const EmbeddingVarContext<GPUDevice>& ctx,
+                              const K* keys,
+                              int* d_prefix_sum,
+                              K* d_missing_keys, 
+                              int* d_missing_index, 
+                              int* d_missing_len,
+                              int num_of_keys){
+    void* args[] = {
+      (void*)&keys,
+      (void*)&d_prefix_sum,
+      (void*)&d_missing_index,
+      (void*)&d_missing_keys,
+      (void*)&d_missing_len,
+      (void*)&num_of_keys};
+
+    cudaLaunchKernel(
+      (void *)get_missing_keys_and_index<K>,
+      ((num_of_keys - 1) / BLOCK_SIZE_) + 1,
+      BLOCK_SIZE_,
+      args, 0, ctx.gpu_device.stream()); 
+
   }
 
 
@@ -794,6 +839,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   int* set_mutex_ = nullptr;
   
   Allocator* gpu_alloc_;
+  int temp_observe = 0;
 };
 #endif // GOOGLE_CUDA
 

@@ -341,13 +341,13 @@ TF_CALL_int64(REGISTER_KERNELS_ALL_INDEX)
 // Also update locality information for touched slot
 template <class K, class V>
 __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
-                           const int embedding_vec_size, int* d_missing_index,
-                           K* d_missing_keys, int* d_missing_len,
+                           const int embedding_vec_size,
+                           int* d_warp_missing_counter,
                            int* global_counter,
                            int* slot_counter, const int capacity_in_set,
                            slab_set<K>* keys, V* vals, int* set_mutex,
                            const int task_per_warp_tile) {
-  int empty_key = -1;
+  K empty_key = -1;
   // Lane(thread) ID within a warp_tile
   cg::thread_block_tile<WARP_SIZE> warp_tile =
       cg::tiled_partition<WARP_SIZE>(cg::this_thread_block());
@@ -399,7 +399,7 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
     const unsigned old_active_mask = active_mask;
 
     // Lock the slabset before operating the slabset
-    warp_lock_mutex(warp_tile, set_mutex[next_set]);
+    //warp_lock_mutex(warp_tile, set_mutex[next_set]);
 
     // The warp-level inner loop: finish a single task in the work queue
     while (active_mask == old_active_mask) {
@@ -472,19 +472,13 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
   // First thread of the warp_tile accumulate the missing length to global variable
   int warp_position;
   if (lane_idx == 0) {
-    warp_position = atomicAdd(d_missing_len, (int)warp_missing_counter);
-  }
-  warp_position = warp_tile.shfl(warp_position, 0);
-
-  if (lane_idx < warp_missing_counter) {
-    d_missing_keys[warp_position + lane_idx] = missing_key;
-    d_missing_index[warp_position + lane_idx] = missing_index;
+    d_warp_missing_counter[warp_tile_global_idx] = warp_missing_counter;
   }
 }
 
 #define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
-   template __global__ void get_kernel<T1, T2>(const T1 *, const int,T2 *, const int, int *, \
-      T1 *, int *, int *,int *, const int, slab_set<T1> *, T2 *, int *, const int);                           
+   template __global__ void get_kernel<T1, T2>(const T1 *, const int, T2 *, const int, int*, int *,int *, \
+                                               const int, slab_set<T1> *, T2 *, int *, const int);                          
 
 #define REGISTER_KERNELS_ALL_TYPES(T2) \
    REGISTER_KERNELS_ALL_INDEX(int32, T2) \
@@ -689,6 +683,40 @@ TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
 TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
 
 #undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
+
+__global__ void sequential_scan_kernel(int *data, int *prefix_sum, int N)
+{
+  prefix_sum[0] = 0;
+  for (int i = 1; i <= N; i++)
+  {
+    prefix_sum[i] = prefix_sum[i - 1] + data[i - 1];
+  }
+}
+
+template <class K>
+__global__ void get_missing_keys_and_index(const K* d_keys, int *prefix_sum,
+                                           int* d_missing_index, K* d_missing_keys, 
+                                           int* d_missing_len, int len){
+  const int key_idx = blockDim.x * blockIdx.x + threadIdx.x;
+  if(key_idx < len){
+    K key = d_keys[key_idx];
+    int idx = prefix_sum[key_idx - 1];
+    if(prefix_sum[key_idx - 1] != prefix_sum[key_idx]){
+      d_missing_index[idx] = key_idx;
+      d_missing_keys[idx] = key;
+    }
+
+    if(key_idx == 0){
+      *d_missing_len = prefix_sum[len];
+    }
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T) \
+  template __global__ void get_missing_keys_and_index<T>(const T *, int *, int *, T *, int*, int);
+TF_CALL_int32(REGISTER_KERNELS_ALL_INDEX)
+TF_CALL_int64(REGISTER_KERNELS_ALL_INDEX)
 #undef REGISTER_KERNELS_ALL_INDEX
 
 }  // namespace tensorflow
