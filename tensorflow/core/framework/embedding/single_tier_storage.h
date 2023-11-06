@@ -652,27 +652,53 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       args2, 0, ctx.gpu_device.stream());
   }
 
+  void scan(const EmbeddingVarContext<GPUDevice>& ctx,
+                      int *d_data, 
+                      int *d_prefix_sum, 
+                      int N,
+                      int *d_sums) {
+      int block_num = (N - 1) / MAX_ELEMENTS_PER_BLOCK + 1;
+
+      void* args[] = {
+        (void*)&d_data,
+        (void*)&d_prefix_sum,
+        (void*)&N,
+        (void*)&d_sums};
+
+      cudaLaunchKernel(
+        (void *)parallel_large_scan_kernel,
+        block_num,
+        MAX_THREADS_PER_BLOCK,
+        args, 0, ctx.gpu_device.stream());
+
+      if(block_num != 1){
+        void* args2[] = {
+          (void*)&d_prefix_sum,
+          (void*)&d_sums,
+          (void*)&N};
+
+        cudaLaunchKernel(
+          (void *)add_kernel,
+          block_num,
+          MAX_THREADS_PER_BLOCK,
+          args2, 0, ctx.gpu_device.stream());
+      }
+  }
+
   void PrefixSum(const EmbeddingVarContext<GPUDevice>& ctx,
                  int* d_warp_missing_counter,
                  int* d_prefix_sum,
-                 int size){
-    void* args[] = {
-      (void*)&d_warp_missing_counter,
-      (void*)&d_prefix_sum,
-      (void*)&size};
+                 int size,
+                 int *d_sums){
 
-    cudaLaunchKernel(
-      (void *)sequential_scan_kernel,
-      1,
-      1,
-      args, 0, ctx.gpu_device.stream()); 
-
-    cudaStreamSynchronize(ctx.gpu_device.stream());
+    scan(ctx, d_warp_missing_counter, d_prefix_sum, size + 1, d_sums);
+    
     if(temp_observe == 0){
+      cudaStreamSynchronize(ctx.gpu_device.stream());
       temp_observe++;
       int prefix_sum[4096];
-      cudaMemcpy(prefix_sum, d_prefix_sum, sizeof(int) * 2048, cudaMemcpyDeviceToHost);
-      for(int i = 0; i < 128; i++){
+      cudaMemcpy(prefix_sum, d_prefix_sum, sizeof(int) * 2049, cudaMemcpyDeviceToHost);
+      for(int i = 0; i <= 2048; i++){
         LOG(INFO) << prefix_sum[i];
       }
     }

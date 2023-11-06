@@ -694,6 +694,136 @@ __global__ void sequential_scan_kernel(int *data, int *prefix_sum, int N)
   }
 }
 
+__global__ void parallel_large_scan_kernel(int *data, int *prefix_sum, int N, int *sums)
+{
+    __shared__ int tmp[MAX_ELEMENTS_PER_BLOCK];
+    int tid = threadIdx.x;
+    int bid = blockIdx.x;
+    int block_offset = bid * MAX_ELEMENTS_PER_BLOCK;
+    int leaf_num = MAX_ELEMENTS_PER_BLOCK;
+
+    tmp[tid * 2] = tid * 2 + block_offset < N ? data[tid * 2 + block_offset] : 0;
+    tmp[tid * 2 + 1] = tid * 2 + 1 + block_offset < N ? data[tid * 2 + 1 + block_offset] : 0;
+    __syncthreads();
+
+    int offset = 1;
+    for (int d = leaf_num >> 1; d > 0; d >>= 1)
+    {
+        if (tid < d)
+        {
+            int ai = offset * (2 * tid + 1) - 1;
+            int bi = offset * (2 * tid + 2) - 1;
+            tmp[bi] += tmp[ai];
+        }
+        offset *= 2;
+        __syncthreads();
+    }
+
+    if (tid == 0)
+    {
+        sums[bid] = tmp[leaf_num - 1];
+        tmp[leaf_num - 1] = 0;
+    }
+    __syncthreads();
+
+    for (int d = 1; d < leaf_num; d *= 2)
+    {
+        offset >>= 1;
+        if (tid < d)
+        {
+            int ai = offset * (2 * tid + 1) - 1;
+            int bi = offset * (2 * tid + 2) - 1;
+
+            int v = tmp[ai];
+            tmp[ai] = tmp[bi];
+            tmp[bi] += v;
+        }
+        __syncthreads();
+    }
+
+    if (tid * 2 + block_offset < N)
+    {
+        prefix_sum[tid * 2 + block_offset] = tmp[tid * 2];
+    }
+    if (tid * 2 + 1 + block_offset < N)
+    {
+        prefix_sum[tid * 2 + 1 + block_offset] = tmp[tid * 2 + 1];
+    }
+
+    __threadfence();
+    int block_num = (N - 1) / MAX_ELEMENTS_PER_BLOCK + 1;
+    if (bid == 0 && block_num != 1)
+    {
+        __shared__ int tmp2[MAX_ELEMENTS_PER_BLOCK];
+
+        tmp2[tid * 2] = tid * 2 < block_num ? sums[tid * 2] : 0;
+        tmp2[tid * 2 + 1] = tid * 2 + 1 < block_num ? sums[tid * 2 + 1] : 0;
+        __syncthreads();
+
+        offset = 1;
+        for (int d = leaf_num >> 1; d > 0; d >>= 1)
+        {
+            if (tid < d)
+            {
+                int ai = offset * (2 * tid + 1) - 1;
+                int bi = offset * (2 * tid + 2) - 1;
+                tmp2[bi] += tmp2[ai];
+            }
+            offset *= 2;
+            __syncthreads();
+        }
+
+        if (tid == 0)
+        {
+            tmp2[leaf_num - 1] = 0;
+        }
+        __syncthreads();
+
+        for (int d = 1; d < leaf_num; d *= 2)
+        {
+            offset >>= 1;
+            if (tid < d)
+            {
+                int ai = offset * (2 * tid + 1) - 1;
+                int bi = offset * (2 * tid + 2) - 1;
+
+                int v = tmp2[ai];
+                tmp2[ai] = tmp2[bi];
+                tmp2[bi] += v;
+            }
+            __syncthreads();
+        }
+
+        if (tid * 2 < block_num)
+        {
+            sums[tid * 2] = tmp2[tid * 2];
+        }
+        if (tid * 2 + 1 < block_num)
+        {
+            sums[tid * 2 + 1] = tmp2[tid * 2 + 1];
+        }
+    }
+
+}
+
+__global__ void add_kernel(int *prefix_sum, int *value, int N)
+{
+    int tid = threadIdx.x;
+    int bid = blockIdx.x;
+    int block_offset = bid * MAX_ELEMENTS_PER_BLOCK;
+    int ai = tid + block_offset;
+    int bi = tid + (MAX_ELEMENTS_PER_BLOCK >> 1) + block_offset;
+
+    if (ai < N)
+    {
+        prefix_sum[ai] += value[bid];
+    }
+    if (bi < N)
+    {
+        prefix_sum[bi] += value[bid];
+    }
+}
+
 template <class K>
 __global__ void get_missing_keys_and_index(const K* d_keys, int *prefix_sum,
                                            int* d_missing_index, K* d_missing_keys, 
@@ -701,8 +831,8 @@ __global__ void get_missing_keys_and_index(const K* d_keys, int *prefix_sum,
   const int key_idx = blockDim.x * blockIdx.x + threadIdx.x;
   if(key_idx < len){
     K key = d_keys[key_idx];
-    int idx = prefix_sum[key_idx - 1];
-    if(prefix_sum[key_idx - 1] != prefix_sum[key_idx]){
+    int idx = prefix_sum[key_idx];
+    if(prefix_sum[key_idx] != prefix_sum[key_idx + 1]){
       d_missing_index[idx] = key_idx;
       d_missing_keys[idx] = key;
     }

@@ -97,6 +97,13 @@ __global__ void CopyMissingToOutput(V *, V *, int *, int, int);
 
 __global__ void sequential_scan_kernel(int *, int *, int);
 
+#define MAX_THREADS_PER_BLOCK 256
+#define MAX_ELEMENTS_PER_BLOCK (MAX_THREADS_PER_BLOCK * 2)
+
+__global__ void parallel_large_scan_kernel(int *, int *, int, int *);
+
+__global__ void add_kernel(int *, int *, int);
+
 template<class K>
 __global__ void get_missing_keys_and_index(const K*, int *, int *, K *, int *, int);
    

@@ -57,6 +57,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
     gpu_alloc_->DeallocateRaw(d_warp_missing_counter_);
     gpu_alloc_->DeallocateRaw(d_prefix_sum_);
+    gpu_alloc_->DeallocateRaw(d_sums_);
 
     delete hbm_;
     delete dram_;
@@ -106,6 +107,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
       gpu_alloc_->DeallocateRaw(d_warp_missing_counter_);
       gpu_alloc_->DeallocateRaw(d_prefix_sum_);
+      gpu_alloc_->DeallocateRaw(d_sums_);
 
       batch_size_ = num_of_keys;
 
@@ -125,6 +127,10 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
           (int*)gpu_alloc_->AllocateRaw(
             Allocator::kAllocatorAlignment,
             (batch_size_ + 1) * sizeof(int));
+      d_sums_ =
+          (int*)gpu_alloc_->AllocateRaw(
+            Allocator::kAllocatorAlignment,
+            ((num_of_keys - 1) / MAX_ELEMENTS_PER_BLOCK + 1) * sizeof(int));
     }
     d_missing_index = d_missing_index_buffer_;
     d_missing_keys = d_missing_keys_buffer_;
@@ -133,7 +139,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     hbm_->BatchGet(
       ctx, keys, output, num_of_keys, value_len, d_warp_missing_counter_, d_missing_len);
 
-    hbm_->PrefixSum(ctx, d_warp_missing_counter_, d_prefix_sum_, num_of_keys);
+    hbm_->PrefixSum(ctx, d_warp_missing_counter_, d_prefix_sum_, num_of_keys, d_sums_);
 
     hbm_->GetMissingKeysAndIndex(ctx, keys, d_prefix_sum_, d_missing_keys, d_missing_index, d_missing_len, num_of_keys);
 
@@ -437,6 +443,7 @@ void ImportToHbm(
 
   int* d_warp_missing_counter_ = nullptr;
   int* d_prefix_sum_ = nullptr;
+  int* d_sums_ = nullptr;
 };
 } // embedding
 } // tensorflow
