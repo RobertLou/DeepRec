@@ -665,24 +665,11 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
         (void*)&N,
         (void*)&d_sums};
 
-      cudaLaunchKernel(
+      cudaLaunchCooperativeKernel(
         (void *)parallel_large_scan_kernel,
         block_num,
         MAX_THREADS_PER_BLOCK,
         args, 0, ctx.gpu_device.stream());
-
-      if(block_num != 1){
-        void* args2[] = {
-          (void*)&d_prefix_sum,
-          (void*)&d_sums,
-          (void*)&N};
-
-        cudaLaunchKernel(
-          (void *)add_kernel,
-          block_num,
-          MAX_THREADS_PER_BLOCK,
-          args2, 0, ctx.gpu_device.stream());
-      }
   }
 
   void PrefixSum(const EmbeddingVarContext<GPUDevice>& ctx,

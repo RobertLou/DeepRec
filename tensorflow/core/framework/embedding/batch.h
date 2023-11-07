@@ -102,8 +102,6 @@ __global__ void sequential_scan_kernel(int *, int *, int);
 
 __global__ void parallel_large_scan_kernel(int *, int *, int, int *);
 
-__global__ void add_kernel(int *, int *, int);
-
 template<class K>
 __global__ void get_missing_keys_and_index(const K*, int *, int *, K *, int *, int);
    

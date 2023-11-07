@@ -804,23 +804,21 @@ __global__ void parallel_large_scan_kernel(int *data, int *prefix_sum, int N, in
         }
     }
 
-}
-
-__global__ void add_kernel(int *prefix_sum, int *value, int N)
-{
-    int tid = threadIdx.x;
-    int bid = blockIdx.x;
-    int block_offset = bid * MAX_ELEMENTS_PER_BLOCK;
-    int ai = tid + block_offset;
-    int bi = tid + (MAX_ELEMENTS_PER_BLOCK >> 1) + block_offset;
-
-    if (ai < N)
+    if (block_num > 1)
     {
-        prefix_sum[ai] += value[bid];
-    }
-    if (bi < N)
-    {
-        prefix_sum[bi] += value[bid];
+        cg::grid_group grid = cg::this_grid();
+        grid.sync();
+        int ai = tid + block_offset;
+        int bi = tid + (MAX_ELEMENTS_PER_BLOCK >> 1) + block_offset;
+
+        if (ai < N)
+        {
+            prefix_sum[ai] += sums[bid];
+        }
+        if (bi < N)
+        {
+            prefix_sum[bi] += sums[bid];
+        }
     }
 }
 
