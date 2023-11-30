@@ -591,6 +591,10 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       Allocator::kAllocatorAlignment,
       sizeof(int) * capacity_in_set_);
 
+    test_global_counter_ = (int *)gpu_alloc_->AllocateRaw(
+      Allocator::kAllocatorAlignment,
+      sizeof(int));
+
     const K empty_key = -1;
 
     // Initialize the cache, set all entry to unused <K,V>
@@ -617,6 +621,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
                 int* &d_missing_index,
                 K* &d_missing_keys,
                 int* &d_missing_len,
+                int* &d_warp_missing_counter,
                 int &miss_count) {           
     // Update the global counter as user perform a new(most recent) read operation to the cache
     // Resolve distance overflow issue as well.
@@ -647,13 +652,42 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       (void*)&keys_,
       (void*)&vals_,
       (void*)&set_mutex_,
-      (void*)&task_per_warp_tile_};
+      (void*)&task_per_warp_tile_,
+      (void*)&d_warp_missing_counter};
 
     cudaLaunchKernel(
       (void *)get_kernel<K, V>,
       grid_size,
       BLOCK_SIZE_,
       args2, 0, ctx.gpu_device.stream());
+
+    void* args3[] = {
+      (void*)&keys,
+      (void*)&num_of_keys,
+      (void*)&d_missing_index,
+      (void*)&d_missing_keys,
+      (void*)&d_missing_len,
+      (void*)&d_warp_missing_counter
+    };
+
+    cudaLaunchKernel(
+      (void *)get_missing_keys_and_index<K>,
+      ((num_of_keys - 1) / BLOCK_SIZE_) + 1,
+      BLOCK_SIZE_,
+      args3, 0, ctx.gpu_device.stream());
+
+
+    int N = 10000;
+    void* args4[] = {
+      (void*)&test_global_counter_,
+      (void*)&N,
+    };
+
+    cudaLaunchKernel(
+      (void *)test_add,
+      (N + 127) / 128,
+      128,
+      args4, 0, ctx.gpu_device.stream());
   }
 
 
@@ -792,6 +826,8 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   int embedding_vec_size_;
 
   int* set_mutex_ = nullptr;
+
+  int* test_global_counter_ = nullptr;
   
   Allocator* gpu_alloc_;
 };

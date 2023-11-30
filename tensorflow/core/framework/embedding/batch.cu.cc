@@ -346,7 +346,8 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
                            int* global_counter,
                            int* slot_counter, const int capacity_in_set,
                            slab_set<K>* keys, V* vals, int* set_mutex,
-                           const int task_per_warp_tile) {
+                           const int task_per_warp_tile,
+                           int* d_warp_missing_counter) {
   int empty_key = -1;
   // Lane(thread) ID within a warp_tile
   cg::thread_block_tile<WARP_SIZE> warp_tile =
@@ -399,7 +400,7 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
     const unsigned old_active_mask = active_mask;
 
     // Lock the slabset before operating the slabset
-    warp_lock_mutex(warp_tile, set_mutex[next_set]);
+    //warp_lock_mutex(warp_tile, set_mutex[next_set]);
 
     // The warp-level inner loop: finish a single task in the work queue
     while (active_mask == old_active_mask) {
@@ -421,7 +422,7 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
       }
 
       // The warp_tile read out the slab
-      K read_key = ((K*)(keys[next_set].set_[next_slab].slab_))[lane_idx];
+      K read_key = keys[next_set].set_[next_slab].slab_[lane_idx];
 
       // Compare the slab data with the target key
       int found_lane = __ffs(warp_tile.ballot(read_key == next_key)) - 1;
@@ -435,8 +436,8 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
         }
 
         warp_tile_copy<V>(lane_idx, embedding_vec_size,
-                                  (V*)(d_values + next_idx * embedding_vec_size),
-                                  (V*)(vals + found_offset * embedding_vec_size));
+                                  d_values + next_idx * embedding_vec_size,
+                                  vals + found_offset * embedding_vec_size);
 
         active_mask = warp_tile.ballot(active);
         break;
@@ -465,12 +466,16 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
     }
 
     // Unlock the slabset after operating the slabset
-    warp_unlock_mutex(warp_tile, set_mutex[next_set]);
+    //warp_unlock_mutex(warp_tile, set_mutex[next_set]);
   }
 
   // After warp_tile complete the working queue, save the result for output
   // First thread of the warp_tile accumulate the missing length to global variable
-  int warp_position;
+  if (lane_idx == 0) {
+    d_warp_missing_counter[warp_tile_global_idx] = warp_missing_counter;
+  }
+
+/*   int warp_position;
   if (lane_idx == 0) {
     warp_position = atomicAdd(d_missing_len, (int)warp_missing_counter);
   }
@@ -479,12 +484,12 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
   if (lane_idx < warp_missing_counter) {
     d_missing_keys[warp_position + lane_idx] = missing_key;
     d_missing_index[warp_position + lane_idx] = missing_index;
-  }
+  } */
 }
 
 #define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
    template __global__ void get_kernel<T1, T2>(const T1 *, const int,T2 *, const int, int *, \
-      T1 *, int *, int *,int *, const int, slab_set<T1> *, T2 *, int *, const int);                           
+      T1 *, int *, int *,int *, const int, slab_set<T1> *, T2 *, int *, const int, int*);                           
 
 #define REGISTER_KERNELS_ALL_TYPES(T2) \
    REGISTER_KERNELS_ALL_INDEX(int32, T2) \
@@ -689,6 +694,34 @@ TF_CALL_int32(REGISTER_KERNELS_ALL_TYPES)
 TF_CALL_int64(REGISTER_KERNELS_ALL_TYPES)
 
 #undef REGISTER_KERNELS_ALL_TYPES
+#undef REGISTER_KERNELS_ALL_INDEX
+
+__global__ void test_add(int *global_counter, int N){
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if(i < N){
+        atomicAdd(global_counter, 1);
+    }
+}
+
+template <class K>
+__global__ void get_missing_keys_and_index(const K* d_keys, const int len, int* d_missing_index,
+                           K* d_missing_keys, int* d_missing_len, int* d_warp_missing_counter) {
+  int index = blockDim.x * blockIdx.x + threadIdx.x;                           
+  int warp_position;
+
+  if(index < len){
+    if(d_warp_missing_counter[index] == 1){
+      warp_position = atomicAdd(d_missing_len, 1);
+      d_missing_keys[warp_position] = d_keys[index];
+      d_missing_index[warp_position] = index;
+    }
+  }
+}
+
+#define REGISTER_KERNELS_ALL_INDEX(T) \
+  template __global__ void get_missing_keys_and_index<T>(const T*, const int, int *, T *, int*, int*);
+TF_CALL_int32(REGISTER_KERNELS_ALL_INDEX)
+TF_CALL_int64(REGISTER_KERNELS_ALL_INDEX)
 #undef REGISTER_KERNELS_ALL_INDEX
 
 }  // namespace tensorflow

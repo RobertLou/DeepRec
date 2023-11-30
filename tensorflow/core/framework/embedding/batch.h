@@ -89,11 +89,15 @@ __global__ void insert_replace_kernel(const K *, const V *, const int, const int
 
 template<class K, class V>
 __global__ void get_kernel(const K *, const int,V *, const int, int *, \
-      K *, int *, int *,int *, const int, slab_set<K> *, V *, int * , const int);       
-
+      K *, int *, int *,int *, const int, slab_set<K> *, V *, int * , const int, int*);       
 
 template<class V>
 __global__ void CopyMissingToOutput(V *, V *, int *, int, int);
+
+__global__ void test_add(int *global_counter, int N);
+
+template<class K>
+__global__ void get_missing_keys_and_index(const K*, const int, int *, K *, int*, int*);
    
 
 }  // namespace tensorflow

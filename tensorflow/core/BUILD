@@ -6118,6 +6118,7 @@ cuda_library(
     copts = tf_copts(allow_exceptions = True)
         + if_cuda(["-DNV_CUDNN_DISABLE_EXCEPTION"])
         + if_cuda(["-DGOOGLE_CUDA=1"])
+        + ["-dopt=on"]
         + select({
             "//conditions:default": [],
             "@local_config_cuda//cuda:using_nvcc": [
