@@ -6119,6 +6119,7 @@ cuda_library(
         + if_cuda(["-DNV_CUDNN_DISABLE_EXCEPTION"])
         + if_cuda(["-DGOOGLE_CUDA=1"])
         + ["-dopt=on"]
+        + ["-Xpxtas -O3"]
         + select({
             "//conditions:default": [],
             "@local_config_cuda//cuda:using_nvcc": [

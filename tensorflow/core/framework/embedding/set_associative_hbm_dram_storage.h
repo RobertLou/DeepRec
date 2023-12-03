@@ -47,6 +47,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     dram_ = new DramStorage<K, V>(sc, cpu_alloc,
                                   LayoutCreatorFactory::Create<V>(storage_config),
                                   new LocklessHashMapCPU<K, V>(gpu_alloc));
+    cudaMalloc((void **)&d_temp_, sizeof(int));
   }
 
   ~SetAssociativeHbmDramStorage() override {
@@ -56,8 +57,8 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     cudaFreeHost(memcpy_buffer_gpu_);
 
     gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
-    gpu_alloc_->DeallocateRaw(d_warp_missing_counter_);
-
+    cudaFree(d_warp_missing_counter_);
+    cudaFree(d_temp_);
     delete hbm_;
     delete dram_;
   }
@@ -104,7 +105,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       cudaFreeHost(d_missing_len_buffer_);
       cudaFreeHost(memcpy_buffer_gpu_);
 
-      gpu_alloc_->DeallocateRaw(d_warp_missing_counter_);
+      cudaFree(d_warp_missing_counter_);
       gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
 
       batch_size_ = num_of_keys;
@@ -117,20 +118,18 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
           (int*)gpu_alloc_->AllocateRaw(
             Allocator::kAllocatorAlignment,
             batch_size_ * sizeof(int));
-      d_warp_missing_counter_ =
-          (int*)gpu_alloc_->AllocateRaw(
-            Allocator::kAllocatorAlignment,
-            batch_size_ * sizeof(int));
+      cudaMalloc((void**)&d_warp_missing_counter_, batch_size_ * sizeof(int));
     }
     d_missing_index = d_missing_index_buffer_;
     d_missing_keys = d_missing_keys_buffer_;
-    d_missing_len = d_missing_len_buffer_;
+    d_missing_len = d_temp_;
 
     hbm_->BatchGet(
       ctx, keys, output, num_of_keys, value_len, d_missing_index, d_missing_keys, d_missing_len, d_warp_missing_counter_, miss_count);
 
     cudaStreamSynchronize(ctx.gpu_device.stream());
-    miss_count = *d_missing_len;
+    cudaMemcpy(&miss_count, d_temp_, sizeof(int), cudaMemcpyDeviceToHost);
+    //miss_count = *d_missing_len;
 
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
@@ -174,7 +173,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
         memcpy(memcpy_buffer_gpu_ + i * value_len, memcpy_address[i], value_len * sizeof(V));
       }
       else{
-        LOG(INFO) << "error!";
+        //LOG(INFO) << "error!";
       }
     }
     
@@ -425,6 +424,7 @@ void ImportToHbm(
   K* d_missing_keys_buffer_ = nullptr;
   int* d_missing_index_buffer_ = nullptr;
   int* d_missing_len_buffer_ = nullptr;
+  int* d_temp_ = nullptr;
   V* memcpy_buffer_gpu_ = nullptr;
   int* d_warp_missing_counter_ = nullptr;
 };
