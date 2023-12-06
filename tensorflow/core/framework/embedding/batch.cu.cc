@@ -399,7 +399,7 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
     const unsigned old_active_mask = active_mask;
 
     // Lock the slabset before operating the slabset
-    warp_lock_mutex(warp_tile, set_mutex[next_set]);
+    //warp_lock_mutex(warp_tile, set_mutex[next_set]);
 
     // The warp-level inner loop: finish a single task in the work queue
     while (active_mask == old_active_mask) {
@@ -465,14 +465,16 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
     }
 
     // Unlock the slabset after operating the slabset
-    warp_unlock_mutex(warp_tile, set_mutex[next_set]);
+    //warp_unlock_mutex(warp_tile, set_mutex[next_set]);
   }
 
   // After warp_tile complete the working queue, save the result for output
   // First thread of the warp_tile accumulate the missing length to global variable
   int warp_position;
   if (lane_idx == 0) {
-    warp_position = atomicAdd(d_missing_len, (int)warp_missing_counter);
+    if(warp_missing_counter > 0){
+      warp_position = atomicAdd(d_missing_len, (int)warp_missing_counter);
+    }
   }
   warp_position = warp_tile.shfl(warp_position, 0);
 
