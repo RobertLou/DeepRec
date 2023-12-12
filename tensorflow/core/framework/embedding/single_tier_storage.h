@@ -616,7 +616,8 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
                 int64 value_len,
                 int* d_missing_index,
                 K* d_missing_keys,
-                int* d_missing_len) {           
+                int* d_missing_len,
+                int* miss_count) {           
     // Update the global counter as user perform a new(most recent) read operation to the cache
     // Resolve distance overflow issue as well.
     void* args[] = {
@@ -640,6 +641,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
       (void*)&d_missing_index,
       (void*)&d_missing_keys,
       (void*)&d_missing_len,
+      (void*)&miss_count,
       (void*)&global_counter_,
       (void*)&slot_counter_,
       (void*)&capacity_in_set_,

@@ -342,7 +342,7 @@ TF_CALL_int64(REGISTER_KERNELS_ALL_INDEX)
 template <class K, class V>
 __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
                            const int embedding_vec_size, int* d_missing_index,
-                           K* d_missing_keys, int* d_missing_len,
+                           K* d_missing_keys, int* d_missing_len, int* miss_count,
                            int* global_counter,
                            int* slot_counter, const int capacity_in_set,
                            slab_set<K>* keys, V* vals, int* set_mutex,
@@ -482,11 +482,14 @@ __global__ void get_kernel(const K* d_keys, const int len, V* d_values,
     d_missing_keys[warp_position + lane_idx] = missing_key;
     d_missing_index[warp_position + lane_idx] = missing_index;
   }
+
+  __threadfence();
+  *miss_count = *d_missing_len;
 }
 
 #define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
    template __global__ void get_kernel<T1, T2>(const T1 *, const int,T2 *, const int, int *, \
-      T1 *, int *, int *,int *, const int, slab_set<T1> *, T2 *, int *, const int);                           
+      T1 *, int *, int *, int *, int *, const int, slab_set<T1> *, T2 *, int *, const int);                           
 
 #define REGISTER_KERNELS_ALL_TYPES(T2) \
    REGISTER_KERNELS_ALL_INDEX(int32, T2) \

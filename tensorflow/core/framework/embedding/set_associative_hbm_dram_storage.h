@@ -52,6 +52,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   ~SetAssociativeHbmDramStorage() override {
     cudaFreeHost(d_missing_keys_buffer_);
     cudaFreeHost(memcpy_buffer_gpu_);
+    cudaFreeHost(h_miss_count_);
 
     gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
     gpu_alloc_->DeallocateRaw(d_missing_len_buffer_);
@@ -99,6 +100,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
     if(batch_size_ < num_of_keys){
       cudaFreeHost(d_missing_keys_buffer_);
+      cudaFreeHost(h_miss_count_);
       cudaFreeHost(memcpy_buffer_gpu_);
       gpu_alloc_->DeallocateRaw(d_missing_index_buffer_);
       gpu_alloc_->DeallocateRaw(d_missing_len_buffer_);
@@ -106,7 +108,10 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       batch_size_ = num_of_keys;
 
       cudaHostAlloc((void **)&d_missing_keys_buffer_, batch_size_ * sizeof(K), cudaHostAllocDefault);
-      cudaHostAlloc((void **)&memcpy_buffer_gpu_, batch_size_ * value_len * sizeof(V), cudaHostAllocWriteCombined);   
+      cudaHostAlloc((void **)&memcpy_buffer_gpu_, batch_size_ * value_len * sizeof(V), cudaHostAllocWriteCombined);
+      cudaHostAlloc((void **)&h_miss_count_, sizeof(int), cudaHostAllocDefault);
+
+
       d_missing_index_buffer_ =
         (int*)gpu_alloc_->AllocateRaw(
           Allocator::kAllocatorAlignment,
@@ -121,10 +126,10 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     d_missing_len = d_missing_len_buffer_;
 
     hbm_->BatchGet(
-      ctx, keys, output, num_of_keys, value_len, d_missing_index, d_missing_keys, d_missing_len);
+      ctx, keys, output, num_of_keys, value_len, d_missing_index, d_missing_keys, d_missing_len, h_miss_count_);
     
-    cudaMemcpyAsync(&miss_count, d_missing_len_buffer_, sizeof(int), cudaMemcpyDeviceToHost, ctx.gpu_device.stream());
-    cudaStreamSynchronize(ctx.gpu_device.stream());
+    //cudaStreamSynchronize(ctx.gpu_device.stream());
+    miss_count = *h_miss_count_;
 
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
@@ -168,7 +173,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
         memcpy(memcpy_buffer_gpu_ + i * value_len, memcpy_address[i], value_len * sizeof(V));
       }
       else{
-        LOG(INFO) << "error!";
+        //LOG(INFO) << "error!";
       }
     }
     
@@ -417,6 +422,7 @@ void ImportToHbm(
   //Host memory buffer for each thread
   int batch_size_ = 0;
   K* d_missing_keys_buffer_ = nullptr;
+  int* h_miss_count_ = nullptr;
   int* d_missing_index_buffer_ = nullptr;
   int* d_missing_len_buffer_ = nullptr;
   V* memcpy_buffer_gpu_ = nullptr;

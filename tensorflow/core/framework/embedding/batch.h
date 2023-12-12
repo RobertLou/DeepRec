@@ -89,7 +89,7 @@ __global__ void insert_replace_kernel(const K *, const V *, const int, const int
 
 template<class K, class V>
 __global__ void get_kernel(const K *, const int,V *, const int, int *, \
-      K *, int *, int *,int *, const int, slab_set<K> *, V *, int * , const int);       
+      K *, int *, int *, int *, int *, const int, slab_set<K> *, V *, int * , const int);       
 
 
 template<class V>
