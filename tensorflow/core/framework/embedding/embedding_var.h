@@ -80,7 +80,19 @@ class EmbeddingVar : public ResourceBase {
     value_len_ =
         default_tensor.NumElements() / emb_config_.default_value_dim;
 
-    if (storage_->IsUseHbm()) {
+    if (storage_->IsSetAssociativeHbm()){
+#if GOOGLE_CUDA
+      default_value_ = TypedAllocator::Allocate<V>(alloc_,
+          default_tensor.NumElements(), AllocationAttributes());
+      auto default_tensor_flat = default_tensor.flat<V>();
+      dev_addr_buffer_ = nullptr;
+      dev_addr_buffer_size_ = 0;
+      cudaMemcpy(default_value_, &default_tensor_flat(0),
+          default_tensor.TotalBytes(), cudaMemcpyDeviceToDevice);
+      storage_->InitSetAssociativeHbmDramStorage();
+#endif  // GOOGLE_CUDA
+    }
+    else if (storage_->IsUseHbm()) {
 #if GOOGLE_CUDA
       default_value_ = TypedAllocator::Allocate<V>(alloc_,
           default_tensor.NumElements(), AllocationAttributes());
@@ -294,7 +306,12 @@ class EmbeddingVar : public ResourceBase {
     if (IsSingleHbm()) {
       storage_->BatchLookup(context.gpu_device, keys, 
 		            output, num_of_keys, default_value_);
-    } else {
+    } 
+    else if(IsSetAssociativeHbm()){
+      filter_->BatchLookup(context, keys, output,
+                      num_of_keys, default_value_);
+    }
+    else {
       filter_->BatchLookup(context, keys, output,
                            num_of_keys, default_value_,
                            default_value_no_permission_);
@@ -361,6 +378,32 @@ class EmbeddingVar : public ResourceBase {
                       void** value_ptr_list,
                       int64 num_of_keys) {
     storage_->BatchGet(ctx, keys, value_ptr_list, num_of_keys);
+  }
+
+  void BatchLookupKey(const EmbeddingVarContext<GPUDevice>& ctx,
+                      const K* keys,
+                      V* output,
+                      void ** value_ptr_list,
+                      int64 num_of_keys,
+                      K* &missing_keys,
+                      int* &missing_index,
+                      int* &missing_len,
+                      int &miss_count) {
+    storage_->BatchGet(ctx, keys, output, value_ptr_list, num_of_keys,
+                       ValueLen(), missing_keys, missing_index, missing_len, miss_count);
+  }//For SetAssociative GPU Cache
+
+  void BatchGetMissing(const EmbeddingVarContext<GPUDevice>& ctx,
+                       const K* missing_keys,
+                       int* missing_index,
+                       V* output,
+                       int miss_count,
+                       V **memcpy_address,
+                       bool* initialize_status,
+                       V *default_value_ptr){
+    storage_->BatchGetMissing(ctx, missing_keys, missing_index, output, 
+                              ValueLen(), miss_count, memcpy_address, 
+                              initialize_status, default_value_ptr);
   }
 
   Status LookupOrCreateKey(const EmbeddingVarContext<GPUDevice>& context,
@@ -451,6 +494,10 @@ class EmbeddingVar : public ResourceBase {
 
   bool IsUseHbm() {
     return storage_->IsUseHbm();
+  }
+
+  bool IsSetAssociativeHbm() {
+    return storage_->IsSetAssociativeHbm();
   }
 
   bool IsSingleHbm() {

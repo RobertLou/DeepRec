@@ -78,6 +78,11 @@ class FilterPolicy {
                            V* default_value_ptr,
                            V* default_value_no_permission) = 0;
 
+  virtual void BatchLookup(const EmbeddingVarContext<GPUDevice>& context,
+                          const K* keys, V* output,
+                          int64 num_of_keys,
+                          V* default_value_ptr) = 0;                         
+
   virtual void BatchLookupOrCreateKey(
       const EmbeddingVarContext<GPUDevice>& ctx,
       const K* keys, void** value_ptrs_list,
