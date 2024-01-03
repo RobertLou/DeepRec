@@ -135,6 +135,10 @@ class DramSsdHashStorage : public MultiTierStorage<K, V> {
   bool IsSingleHbm() override {
     return false;
   }
+  
+  bool IsSetAssociativeHbm() override {
+    return false;
+  }
 
   bool IsUsePersistentStorage() override {
     return true;

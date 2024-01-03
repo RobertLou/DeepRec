@@ -17,6 +17,9 @@ limitations under the License.
 #define TENSORFLOW_CORE_FRAMEWORK_EMBEDDING_BATCH_
 
 #if GOOGLE_CUDA
+
+#include<cuda_runtime.h>
+
 namespace tensorflow {
 namespace embedding {
 
@@ -59,6 +62,40 @@ template<class V>
 __global__ void SparseApplyAdamWGPU(V** var, V** m, V** v,
     const V* g, V alpha, V beta1, V beta2, V epsilon,
     V weight_decay, int embedding_dim, long long int limit);
+
+// slab for static slab list
+#define WARP_SIZE 32
+#define SET_ASSOCIATIVITY 2
+
+template <class K>
+struct static_slab {
+  K slab_[WARP_SIZE];
+};
+
+// Static slablist(slabset) for GPU Cache
+template <class K>
+struct slab_set {
+  static_slab<K> set_[SET_ASSOCIATIVITY];
+};
+
+__global__ void update_kernel_overflow_ignore(int* global_counter, int* d_missing_len);
+
+template<class K>
+__global__ void init_cache(slab_set<K> *, int *, int *, const int, const K, int *, const int);
+
+template<class K, class V>
+__global__ void insert_replace_kernel(const K *, const V *, const int, const int, slab_set<K> *, \
+    V *, int *, int *, int *, const int, const int);
+
+template<class K, class V>
+__global__ void get_kernel(const K *, const int,V *, const int, int *, \
+      K *, int *, int *, int *, int *, const int, slab_set<K> *, V *, int * , const int);       
+
+
+template<class V>
+__global__ void CopyMissingToOutput(V *, V *, int *, int, int);
+   
+
 }  // namespace tensorflow
 
 #endif  // GOOGLE_CUDA

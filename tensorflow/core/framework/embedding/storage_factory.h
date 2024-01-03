@@ -20,6 +20,7 @@ limitations under the License.
 #include "tensorflow/core/framework/embedding/dram_pmem_storage.h"
 #include "tensorflow/core/framework/embedding/dram_ssd_storage.h"
 #include "tensorflow/core/framework/embedding/hbm_dram_storage.h"
+#include "tensorflow/core/framework/embedding/set_associative_hbm_dram_storage.h"
 #include "tensorflow/core/framework/embedding/hbm_dram_ssd_storage.h"
 #include "tensorflow/core/framework/embedding/multi_tier_storage.h"
 #include "tensorflow/core/framework/embedding/single_tier_storage.h"
@@ -61,6 +62,10 @@ class StorageFactory {
       case StorageType::HBM_DRAM:
 #if GOOGLE_CUDA
         return new HbmDramStorage<K, V>(sc, gpu_allocator, feat_desc, name);
+#endif  // GOOGLE_CUDA
+      case StorageType::SET_ASSOCIATIVE_HBM_DRAM:
+#if GOOGLE_CUDA
+        return new SetAssociativeHbmDramStorage<K, V>(sc, gpu_allocator, feat_desc, name);
 #endif  // GOOGLE_CUDA
       case StorageType::HBM_DRAM_SSDHASH:
 #if GOOGLE_CUDA

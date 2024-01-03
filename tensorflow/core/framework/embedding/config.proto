@@ -19,6 +19,7 @@ enum StorageType {
   DRAM_SSDHASH = 12;
   HBM_DRAM = 13;
   DRAM_LEVELDB = 14;
+  SET_ASSOCIATIVE_HBM_DRAM = 15;
 
   // three level
   DRAM_PMEM_SSDHASH = 101;

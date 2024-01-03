@@ -59,9 +59,26 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
                    int64 num_of_keys,
                    V* default_value_ptr,
                    V* default_value_no_permission) override {
+    std::ostringstream oss;
+    oss << std::this_thread::get_id();
+    std::string threadIdStr = oss.str();
+
+    std::string fileloc1 = "/root/code/DeepRec/time/getValueAddress" + threadIdStr + ".txt";
+    std::string fileloc2 = "/root/code/DeepRec/time/copyToOutput" + threadIdStr + ".txt";
+
+    std::ofstream time_file1;
+    std::ofstream time_file2;
+
+    time_file1.open(fileloc1, std::ios::app);
+    time_file2.open(fileloc2, std::ios::app);
+    
+    timespec tStart, tEnd;
+
     std::vector<void*> value_ptr_list(num_of_keys, nullptr);
     ev_->BatchLookupKey(ctx, keys, value_ptr_list.data(), num_of_keys);
     std::vector<V*> embedding_ptr(num_of_keys, nullptr);
+
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
     auto do_work = [this, keys, value_ptr_list, &embedding_ptr,
                     default_value_ptr, default_value_no_permission]
         (int64 start, int64 limit) {
@@ -79,11 +96,101 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
     Shard(worker_threads->num_threads,
           worker_threads->workers, num_of_keys,
           1000, do_work);
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
     auto stream = ctx.compute_stream;
     auto event_mgr = ctx.event_mgr;
     ev_->CopyEmbeddingsToBuffer(
         output, num_of_keys, embedding_ptr.data(),
         stream, event_mgr, ctx.gpu_device);
+
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file2 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+
+    time_file1.close();
+    time_file2.close();
+  }
+
+  void BatchLookup(const EmbeddingVarContext<GPUDevice>& ctx,
+                   const K* keys, V* output,
+                   int64 num_of_keys,
+                   V* default_value_ptr) override {
+    std::ostringstream oss;
+    oss << std::this_thread::get_id();
+    std::string threadIdStr = oss.str();
+
+    std::string fileloc1 = "/root/code/DeepRec/time/gather" + threadIdStr + ".txt";
+    std::string fileloc2 = "/root/code/DeepRec/time/getValueAddress" + threadIdStr + ".txt";
+    std::string fileloc3 = "/root/code/DeepRec/time/getmissing" + threadIdStr + ".txt";
+    std::string fileloc4 = "/root/code/DeepRec/time/missnum" + threadIdStr + ".txt";
+    std::ofstream time_file1;
+    std::ofstream time_file2;
+    std::ofstream time_file3;
+    std::ofstream miss_file;
+	  time_file1.open(fileloc1, std::ios::app);
+    time_file2.open(fileloc2, std::ios::app);
+    time_file3.open(fileloc3, std::ios::app);
+    miss_file.open(fileloc4, std::ios::app);
+
+    timespec tStart, tEnd;
+
+    clock_gettime(CLOCK_MONOTONIC, &tStart);
+    std::vector<void*> value_ptr_list(num_of_keys, nullptr);
+    
+    K *missing_keys = nullptr;
+    int *missing_index = nullptr;
+    int *missing_len = nullptr;
+
+    int miss_count;
+    ev_->BatchLookupKey(ctx, keys, output, value_ptr_list.data(), num_of_keys, missing_keys, missing_index, missing_len, miss_count);
+    clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+
+    if(miss_count > 0){
+        clock_gettime(CLOCK_MONOTONIC, &tStart);
+        std::vector<V*> embedding_ptr(num_of_keys, nullptr);
+        bool *initialize_status = new bool[miss_count];
+        
+        auto do_work = [this, value_ptr_list, &embedding_ptr, 
+                      default_value_ptr, initialize_status]
+          (int64 start, int64 limit) {
+        for (int i = start; i < limit; i++) {
+          void* value_ptr = value_ptr_list[i];
+          if (value_ptr != nullptr) {
+            embedding_ptr[i] =
+                feat_desc_->GetEmbedding(value_ptr, config_.emb_index);
+                initialize_status[i] = 0;
+          } else {
+            embedding_ptr[i] = nullptr;
+            initialize_status[i] = 1;
+          }
+        }
+      };
+      auto worker_threads = ctx.worker_threads;
+      Shard(worker_threads->num_threads,
+            worker_threads->workers, miss_count,
+            1000, do_work);
+      clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		  time_file2 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+
+      clock_gettime(CLOCK_MONOTONIC, &tStart);
+      ev_->BatchGetMissing(ctx, missing_keys, missing_index, output, 
+                          miss_count, embedding_ptr.data(),
+                          initialize_status, default_value_ptr);
+      clock_gettime(CLOCK_MONOTONIC, &tEnd);
+		  time_file3 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
+              
+      delete[] initialize_status;
+    }
+
+    time_file1.close();
+    time_file2.close();
+    time_file3.close();
+
+    miss_file << miss_count << std::endl;
+    miss_file.close();
   }
 
   void BatchLookupOrCreateKey(const EmbeddingVarContext<GPUDevice>& ctx,
