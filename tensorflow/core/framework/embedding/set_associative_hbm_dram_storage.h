@@ -59,6 +59,9 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
   TF_DISALLOW_COPY_AND_ASSIGN(SetAssociativeHbmDramStorage);
 
+  void Init() override {
+  }
+
   void InitSetAssociativeHbmDramStorage() override {
     hbm_->Init(gpu_alloc_, MultiTierStorage<K, V>::cache_capacity_, Storage<K, V>::alloc_len_);
   } 
