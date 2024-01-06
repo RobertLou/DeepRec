@@ -59,7 +59,8 @@ class FeatureDescriptor {
               filter_info.second,
               storage_type));
     } else if (storage_type == StorageType::HBM_DRAM || 
-               storage_type == StorageType::HBM_DRAM_SSDHASH) {
+               storage_type == StorageType::HBM_DRAM_SSDHASH ||
+               storage_type == StorageType::SET_ASSOCIATIVE_HBM_DRAM) {
       feat_desc_impl_.reset(
           new HbmMultiTierFeatureDescriptorImpl<V>(
               alloc, slot_num,
