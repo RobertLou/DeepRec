@@ -60,11 +60,12 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   TF_DISALLOW_COPY_AND_ASSIGN(SetAssociativeHbmDramStorage);
 
   void Init() override {
+    MultiTierStorage<K, V>::cache_capacity_ =
+        Storage<K, V>::storage_config_.size[0]
+        / (total_dim() * sizeof(V));
+    dram_feat_desc_->InitSlotInfo(hbm_feat_desc_);
+    hbm_->Init(gpu_alloc_, MultiTierStorage<K, V>::cache_capacity_, total_dim());
   }
-
-  void InitSetAssociativeHbmDramStorage() override {
-    hbm_->Init(gpu_alloc_, MultiTierStorage<K, V>::cache_capacity_, Storage<K, V>::alloc_len_);
-  } 
 
   Status Get(K key, void** value_ptr) override {
 
@@ -140,7 +141,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       auto do_work = [this, d_missing_keys, value_ptr_list]
         (int64 start, int64 limit) {
         for (int64 i = start; i < limit; i++) {
-            dram_->Get(d_missing_keys[i], &value_ptr_list[i]);
+          dram_->Get(d_missing_keys[i], &value_ptr_list[i]);
         }
       };
 
@@ -195,18 +196,18 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   }
 
   Status GetOrCreate(K key, void** value_ptr) override {
-    LOG(FATAL)<<"Stroage with HBM only suppotrs batch APIs.";
+    LOG(FATAL)<<"Stroage with HBM only supports batch APIs.";
   }
 
   void Import(K key, V* value,
               int64 freq, int64 version,
               int emb_index) override {
-    
+    dram_->Import(key, value, freq, version, emb_index);
   }
 
   int total_dim() override {
-    return 0;
-  }//TODO::Add it
+    return hbm_feat_desc_->total_dim();
+  }
 
   void ImportToHbm(K* ids, int64 size, int64 value_len, int64 emb_index) {
     V* memcpy_buffer;
@@ -224,6 +225,10 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
       }
     }
     
+    LOG(INFO) << emb_index;
+    LOG(INFO) << dram_feat_desc_->GetEmbedding(cpu_value_ptrs[0], emb_index);
+    LOG(INFO) << hbm_feat_desc_->GetEmbedding(cpu_value_ptrs[0], emb_index);
+
     for (int64 i = 0; i < size; i++) {
       memcpy(memcpy_buffer + i * value_len,
         dram_feat_desc_->GetEmbedding(cpu_value_ptrs[i], emb_index),
@@ -356,7 +361,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     int64 num_of_hbm_ids =
       std::min(MultiTierStorage<K, V>::cache_capacity_,
       (int64)restore_cache_->size());
-    
+
     if (num_of_hbm_ids > 0) {
       K* hbm_ids = new K[num_of_hbm_ids];
       int64* hbm_freqs = new int64[num_of_hbm_ids];

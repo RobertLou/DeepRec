@@ -148,6 +148,7 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
     clock_gettime(CLOCK_MONOTONIC, &tEnd);
 		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
 
+
     if(miss_count > 0){
         clock_gettime(CLOCK_MONOTONIC, &tStart);
         std::vector<V*> embedding_ptr(num_of_keys, nullptr);
@@ -160,8 +161,8 @@ class NullableFilterPolicy : public FilterPolicy<K, V, EV> {
           void* value_ptr = value_ptr_list[i];
           if (value_ptr != nullptr) {
             embedding_ptr[i] =
-                feat_desc_->GetEmbedding(value_ptr, config_.emb_index);
-                initialize_status[i] = 0;
+                feat_desc_->GetEmbedding(&value_ptr, config_.emb_index);
+            initialize_status[i] = 0;
           } else {
             embedding_ptr[i] = nullptr;
             initialize_status[i] = 1;
