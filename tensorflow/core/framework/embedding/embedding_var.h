@@ -90,7 +90,6 @@ class EmbeddingVar : public ResourceBase {
       dev_addr_buffer_size_ = 0;
       cudaMemcpy(default_value_, &default_tensor_flat(0),
           default_tensor.TotalBytes(), cudaMemcpyDeviceToDevice);
-      storage_->InitSetAssociativeHbmDramStorage();
 #endif  // GOOGLE_CUDA
     }
     else if (storage_->IsUseHbm()) {
