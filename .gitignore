@@ -46,3 +46,7 @@ xcuserdata
 *~
 time/a.out
 time/delete_txt_files
+time/delete_all_txt
+*.zip
+tianchi/DLRM/train.csv
+tianchi/DLRM/eval.csv
