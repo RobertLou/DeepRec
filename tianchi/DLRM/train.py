@@ -356,10 +356,8 @@ def build_feature_columns():
     # /tmp/ssd_utpy/ssd_kv_1694879349958633_0108.emb --> 1
     # sync_idx_count = 257
     # HitRate = 88.1704865 %, visit_count = 7147653, hit_count = 6447856
-    storage_option = tf.StorageOption(storage_type=config_pb2.StorageType.DRAM_SSDHASH,
-                                  storage_path="/tmp/ssd_utpy",
-                                  storage_size=[1024 * 1024 * 500],
-                                  cache_strategy = config_pb2.CacheStrategy.B8LFU)
+    storage_option = tf.StorageOption(storage_type=config_pb2.StorageType.DRAM,
+                                  storage_size=[1024 * 1024 * 500])
                                   
     ev_opt = tf.EmbeddingVariableOption(storage_option=storage_option)
 
@@ -542,21 +540,22 @@ def main(tf_config=None, server=None):
         sess_config.graph_options.optimizer_options.do_op_fusion = True
 
     # create model
-    model = DLRM(dense_column=dense_column,
-                 sparse_column=sparse_column,
-                 learning_rate=args.learning_rate,
-                 optimizer_type=args.optimizer,
-                 bf16=args.bf16,
-                 stock_tf=args.tf,
-                 interaction_op=args.interaction_op,
-                 inputs=next_element)
+    with tf.device("/cpu:0"):
+        model = DLRM(dense_column=dense_column,
+                    sparse_column=sparse_column,
+                    learning_rate=args.learning_rate,
+                    optimizer_type=args.optimizer,
+                    bf16=args.bf16,
+                    stock_tf=args.tf,
+                    interaction_op=args.interaction_op,
+                    inputs=next_element)
 
-    # Run model training and evaluation
-    train(sess_config, hooks, model, train_init_op, train_steps,
-          checkpoint_dir, tf_config, server)
-    if not (args.no_eval or tf_config):
-        eval(sess_config, hooks, model, test_init_op, test_steps,
-             checkpoint_dir)
+        # Run model training and evaluation
+        train(sess_config, hooks, model, train_init_op, train_steps,
+            checkpoint_dir, tf_config, server)
+        if not (args.no_eval or tf_config):
+            eval(sess_config, hooks, model, test_init_op, test_steps,
+                checkpoint_dir)
     os.makedirs(result_dir, exist_ok=True)
     with open(result_path, 'w') as f:
         f.write(str(global_time_cost)+'\n')
