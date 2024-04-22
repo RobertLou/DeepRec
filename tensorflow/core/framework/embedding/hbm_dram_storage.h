@@ -320,8 +320,8 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
                                     ev, filter, name_string, file_name_string,
                                     partition_id, partition_num,
                                     is_incr, reset_version, reader);
-    
-    restore_cache_ = CacheFactory::Create<K>(CacheStrategy::LFU, "ads");
+
+    restore_cache_.reset(CacheFactory::Create<K>(CacheStrategy::LFU, "ads"));
     restorer.RestoreCkpt(emb_config, device);
 
     int64 num_of_hbm_ids =
@@ -339,12 +339,10 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
           [this, hbm_ids, num_of_hbm_ids, hbm_versions, hbm_freqs]() {
             MultiTierStorage<K, V>::cache_->update(hbm_ids, num_of_hbm_ids,
                                                    hbm_versions, hbm_freqs);
+                delete[] hbm_ids;
+                delete[] hbm_freqs;
           });
-      delete[] hbm_ids;
-      delete[] hbm_freqs;
-
     }
-    delete restore_cache_;
   }
 
   void UpdateValuePtr(K key, void* new_value_ptr,
@@ -612,7 +610,7 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
   DramStorage<K, V>* dram_ = nullptr;
   FeatureDescriptor<V>* hbm_feat_desc_ = nullptr;
   FeatureDescriptor<V>* dram_feat_desc_ = nullptr;
-  BatchCache<K>* restore_cache_ = nullptr;
+  std::unique_ptr<BatchCache<K>> restore_cache_ = nullptr;
   Allocator* gpu_alloc_;
   const int copyback_flag_offset_bits_ = 60;
 };
