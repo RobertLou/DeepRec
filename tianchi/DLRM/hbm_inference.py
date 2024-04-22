@@ -426,6 +426,7 @@ def train(sess_config,
     save_steps = args.save_steps if args.save_steps or args.no_eval else steps
 
     time_start = time.perf_counter()
+    saver=tf.train.Saver()
     with tf.train.MonitoredTrainingSession(
             master=server.target if server else '',
             is_chief=tf_config['is_chief'] if tf_config else True,
@@ -436,8 +437,9 @@ def train(sess_config,
             summary_dir=checkpoint_dir,
             save_summaries_steps=None,
             config=sess_config) as sess:
-        while not sess.should_stop():
-            sess.run([model.loss])
+        saver.restore(sess, checkpoint_dir)
+        """         while not sess.should_stop():
+            sess.run([model.loss]) """
     time_end = time.perf_counter()
     print("Training completed.")
     time_cost = time_end - time_start
@@ -510,7 +512,7 @@ def main(tf_config=None, server=None):
     # set directory path
     model_dir = os.path.join(args.output_dir,
                              'model_DLRM_' + str(int(time.time())))
-    checkpoint_dir = "/root/code/ckpt/big_model/model_DLRM_1711531956/model.ckpt-16956"
+    checkpoint_dir = "/root/code/ckpt/model_DLRM_1713525455/model.ckpt-16956"
     print("Saving model checkpoints to " + checkpoint_dir)
 
     # create data pipline of train & test dataset
@@ -543,7 +545,6 @@ def main(tf_config=None, server=None):
         sess_config.graph_options.optimizer_options.do_op_fusion = True
 
     # create model
-    with tf.device("/gpu:0"):
         model = DLRM(dense_column=dense_column,
                     sparse_column=sparse_column,
                     learning_rate=args.learning_rate,
@@ -554,11 +555,11 @@ def main(tf_config=None, server=None):
                     inputs=next_element)
 
         # Run model training and evaluation
-        """         train(sess_config, hooks, model, train_init_op, train_steps,
+        train(sess_config, hooks, model, train_init_op, train_steps,
             checkpoint_dir, tf_config, server)
-        if not (args.no_eval or tf_config): """
-        eval(sess_config, hooks, model, test_init_op, test_steps,
-            checkpoint_dir)
+        """if not (args.no_eval or tf_config):
+         eval(sess_config, hooks, model, test_init_op, test_steps,
+            checkpoint_dir) """
     os.makedirs(result_dir, exist_ok=True)
     with open(result_path, 'w') as f:
         f.write(str(global_time_cost)+'\n')

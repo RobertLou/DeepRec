@@ -335,14 +335,16 @@ class HbmDramStorage : public MultiTierStorage<K, V> {
       restore_cache_->get_cached_ids(hbm_ids, num_of_hbm_ids,
                                                      hbm_versions, hbm_freqs);
       ImportToHbm(hbm_ids, num_of_hbm_ids, value_len, emb_config.emb_index);
-
-      MultiTierStorage<K, V>::cache_->update(hbm_ids, num_of_hbm_ids,
-                                              hbm_versions, hbm_freqs);
-      delete restore_cache_;
+      MultiTierStorage<K, V>::cache_thread_pool_->Schedule(
+          [this, hbm_ids, num_of_hbm_ids, hbm_versions, hbm_freqs]() {
+            MultiTierStorage<K, V>::cache_->update(hbm_ids, num_of_hbm_ids,
+                                                   hbm_versions, hbm_freqs);
+          });
       delete[] hbm_ids;
       delete[] hbm_freqs;
 
     }
+    delete restore_cache_;
   }
 
   void UpdateValuePtr(K key, void* new_value_ptr,
