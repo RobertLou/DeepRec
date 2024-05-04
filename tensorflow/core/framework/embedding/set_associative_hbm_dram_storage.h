@@ -355,7 +355,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
                               partition_id, partition_num,
                               is_incr, reset_version, reader);
     
-    restore_cache_ = CacheFactory::Create<K>(CacheStrategy::LFU, "ads");
+    restore_cache_.reset(CacheFactory::Create<K>(CacheStrategy::LFU, "ads"));
     restorer.RestoreCkpt(emb_config, device);
     LOG(INFO) << MultiTierStorage<K, V>::cache_capacity_;
     int64 num_of_hbm_ids =
@@ -372,7 +372,6 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
       delete[] hbm_ids;
       delete[] hbm_freqs;
-      delete restore_cache_;
 
     }
   }
@@ -404,7 +403,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
   FeatureDescriptor<V>* hbm_feat_desc_ = nullptr;
   FeatureDescriptor<V>* dram_feat_desc_ = nullptr;
 
-  BatchCache<K>* restore_cache_ = nullptr;
+  std::unique_ptr<BatchCache<K>> restore_cache_ = nullptr;
   EmbeddingMemoryPool<V>* embedding_mem_pool_ = nullptr;
   Allocator* gpu_alloc_;
   mutex memory_pool_mu_; //ensure thread safety of embedding_mem_pool_

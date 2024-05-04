@@ -356,7 +356,7 @@ def build_feature_columns():
     # /tmp/ssd_utpy/ssd_kv_1694879349958633_0108.emb --> 1
     # sync_idx_count = 257
     # HitRate = 88.1704865 %, visit_count = 7147653, hit_count = 6447856
-    storage_option = tf.StorageOption(storage_type=config_pb2.StorageType.HBM_DRAM,
+    storage_option = tf.StorageOption(storage_type=config_pb2.StorageType.SET_ASSOCIATIVE_HBM_DRAM,
                                   storage_size=[1024 * 1024 * 500])
                                   
     ev_opt = tf.EmbeddingVariableOption(storage_option=storage_option)
@@ -403,48 +403,12 @@ def train(sess_config,
           tf_config=None,
           server=None):
     model.is_training = True
-    hooks = []
-    hooks.extend(input_hooks)
-
-    scaffold = tf.train.Scaffold(
-        local_init_op=tf.group(tf.tables_initializer(),
-                               tf.local_variables_initializer(), data_init_op),
-        saver=tf.train.Saver(max_to_keep=args.keep_checkpoint_max))
-
-    stop_hook = tf.train.StopAtStepHook(last_step=steps)
-    log_hook = tf.train.LoggingTensorHook(
-        {
-            'steps': model.global_step,
-            'loss': model.loss
-        }, every_n_iter=100)
-    hooks.append(stop_hook)
-    hooks.append(log_hook)
-    if args.timeline > 0:
-        hooks.append(
-            tf.train.ProfilerHook(save_steps=args.timeline,
-                                  output_dir=checkpoint_dir))
-    save_steps = args.save_steps if args.save_steps or args.no_eval else steps
-
-    time_start = time.perf_counter()
     saver=tf.train.Saver()
-    with tf.train.MonitoredTrainingSession(
-            master=server.target if server else '',
-            is_chief=tf_config['is_chief'] if tf_config else True,
-            hooks=hooks,
-            scaffold=scaffold,
-            checkpoint_dir=checkpoint_dir,
-            save_checkpoint_steps=steps,
-            summary_dir=checkpoint_dir,
-            save_summaries_steps=None,
-            config=sess_config) as sess:
+    with tf.Session(config=sess_config) as sess:
         saver.restore(sess, checkpoint_dir)
         """         while not sess.should_stop():
             sess.run([model.loss]) """
-    time_end = time.perf_counter()
-    print("Training completed.")
-    time_cost = time_end - time_start
-    global global_time_cost
-    global_time_cost = time_cost
+        #sess.run([model.loss])
 
 
 def eval(sess_config, input_hooks, model, data_init_op, steps, checkpoint_dir):

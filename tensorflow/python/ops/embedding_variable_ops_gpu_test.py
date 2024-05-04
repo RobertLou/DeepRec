@@ -1036,7 +1036,7 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     print(len(batch_list))
     with ops.device("/gpu:0"):
       storage_option = variables.StorageOption(
-                  storage_type=config_pb2.StorageType.HBM_DRAM,
+                  storage_type=config_pb2.StorageType.SET_ASSOCIATIVE_HBM_DRAM,
                   storage_size=[1024 * 1024 * 1024])
       ev_option = variables.EmbeddingVariableOption(
                                 storage_option=storage_option)
@@ -1091,7 +1091,7 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     print(len(batch_list))
     with ops.device("/gpu:0"):
       storage_option = variables.StorageOption(
-                  storage_type=config_pb2.StorageType.HBM_DRAM,
+                  storage_type=config_pb2.StorageType.SET_ASSOCIATIVE_HBM_DRAM,
                   storage_size=[524288 * 128 * 4])
       ev_option = variables.EmbeddingVariableOption(
                                 storage_option=storage_option)
