@@ -521,7 +521,7 @@ class HbmStorageWithCpuKv: public SingleTierStorage<K, V> {
 };
 
 template<typename K, typename V>
-class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
+class SetAssociativeHbmStorage : public SingleTierStorage<K, V> {
  public:
   SetAssociativeHbmStorage(const StorageConfig& sc,
       FeatureDescriptor<V>* feat_desc) : SingleTierStorage<K, V>(
@@ -681,7 +681,7 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
   void Restore(const K* keys,
               int64 value_len,
               int size,
-              V *memcpy_buffer_gpu){
+              V *memcpy_buffer_gpu) {
     // Try to insert the <k,v> paris into the cache as long as there are unused slot
     // Then replace the <k,v> pairs into the cache
     const int keys_per_block = (BLOCK_SIZE_ / WARP_SIZE) * task_per_warp_tile_;
@@ -708,8 +708,9 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
     PrintCache();
   }
 
-  void PrintCache(){
+  void PrintCache() {
     cudaDeviceSynchronize();
+    LOG(INFO) << "Embedding Dim:" << embedding_vec_size_;
     slabset* h_keys = nullptr;
     V* h_vals = nullptr;
     h_keys = (slabset *)malloc(sizeof(slabset) * capacity_in_set_);
@@ -717,17 +718,17 @@ class SetAssociativeHbmStorage: public SingleTierStorage<K, V> {
 
     cudaMemcpy(h_keys, keys_, sizeof(slabset) * capacity_in_set_, cudaMemcpyDeviceToHost);
     cudaMemcpy(h_vals, vals_, sizeof(V) * embedding_vec_size_ * num_slot_, cudaMemcpyDeviceToHost);
-    for(int i = 0; i < 4; i++){
-      for(int j = 0; j < SET_ASSOCIATIVITY; j++){
-        for(int k = 0; k < WARP_SIZE; k++){
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < SET_ASSOCIATIVITY; j++) {
+        for (int k = 0; k < WARP_SIZE; k++) {
           K key = h_keys[i].set_[j].slab_[k];
           int val_index = ((i * SET_ASSOCIATIVITY + j) * WARP_SIZE + k) * embedding_vec_size_;
-          if(key != -1 && key % capacity_in_set_ != i){
+          if (key != -1 && key % capacity_in_set_ != i) {
             LOG(INFO) << "wrong!!!!!";
           }
           std::cout << "key:" << key << std::endl;
           std::cout << "[";
-          for(int m = 0; m < 10; m++){
+          for (int m = 0; m < embedding_vec_size_; m++) {
             std::cout << h_vals[val_index + m] << ",";
           }
           std::cout << "]" << std::endl;

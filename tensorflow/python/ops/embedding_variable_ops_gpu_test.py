@@ -1059,9 +1059,7 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     saver = saver_module.Saver()
     
     checkpoint_directory = self.get_temp_dir()
-    #checkpoint_directory = "/root/code/ckpt/tmp_model/"
     #checkpoint_directory = "/root/code/ckpt/adgroup_id_model/"
-    #checkpoint_directory = "/root/code/ckpt/cate_id_model/"
     model_path = os.path.join(checkpoint_directory, "model.ckpt")
     with self.test_session() as sess:
       sess.run(ops.get_collection(ops.GraphKeys.EV_INIT_VAR_OPS))
@@ -1104,7 +1102,6 @@ class EmbeddingVariableGpuTest(test_util.TensorFlowTestCase):
     #emb = embedding_ops.embedding_lookup(emb_var, math_ops.cast([0,1,2,5,6,7,8,9,10,11], dtypes.int64))
   
     saver = saver_module.Saver()
-    #checkpoint_directory = "/root/code/ckpt/cate_id_model/"
     checkpoint_directory = "/root/code/ckpt/adgroup_id_model/"
     model_path = os.path.join(checkpoint_directory, "model.ckpt")
     graph = ops.get_default_graph()

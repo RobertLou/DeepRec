@@ -406,9 +406,16 @@ def train(sess_config,
     saver=tf.train.Saver()
     with tf.Session(config=sess_config) as sess:
         saver.restore(sess, checkpoint_dir)
-        """         while not sess.should_stop():
-            sess.run([model.loss]) """
-        #sess.run([model.loss])
+        sess.run(data_init_op)
+        sess.run(tf.tables_initializer())
+
+        sess.run(model.loss)
+        sess.run(model.loss)
+        sess.run(model.loss)
+        sess.run(model.loss)
+        sess.run(model.loss)
+        sess.run(model.loss)
+        sess.run(model.loss)
 
 
 def eval(sess_config, input_hooks, model, data_init_op, steps, checkpoint_dir):

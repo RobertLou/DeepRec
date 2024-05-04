@@ -575,8 +575,8 @@ __global__ void insert_replace_kernel(const K* d_keys, const V* d_values,
     int counter = 0;
 
     // Variable to keep the min slot counter during the probing
-    int max_int = 9999999;
-    int max_slab_distance = 9999999;
+    int max_int = std::numeric_limits<int>::max();
+    int max_slab_distance = std::numeric_limits<int>::max();
     int min_slot_counter_val = max_int;
     // Variable to keep the slab distance for slot with min counter
     int slab_distance = max_slab_distance;

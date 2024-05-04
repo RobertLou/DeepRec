@@ -98,7 +98,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 
     clock_gettime(CLOCK_MONOTONIC, &tStart);
 
-    if(batch_size_ < num_of_keys){
+    if(batch_size_ < num_of_keys) {
       cudaFreeHost(d_missing_keys_buffer_);
       cudaFreeHost(h_miss_count_);
       cudaFreeHost(memcpy_buffer_gpu_);
@@ -135,7 +135,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
 		time_file1 << ((double)(tEnd.tv_sec - tStart.tv_sec)*1000000000 + tEnd.tv_nsec - tStart.tv_nsec)/1000000 << std::endl;
 
     clock_gettime(CLOCK_MONOTONIC, &tStart);
-    if(miss_count > 0){
+    if (miss_count > 0) {
       int num_worker_threads = ctx.worker_threads->num_threads;
     
       auto do_work = [this, d_missing_keys, value_ptr_list]
@@ -166,7 +166,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
               int miss_count,
               V **memcpy_address,
               bool* initialize_status,
-              V *default_value_ptr){    
+              V *default_value_ptr) {    
 
     for(int i = 0; i < miss_count; i++){
       if(!initialize_status[i]){
@@ -224,10 +224,6 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
         dram_->Get(ids[i], &cpu_value_ptrs[i]);
       }
     }
-    
-    LOG(INFO) << emb_index;
-    LOG(INFO) << dram_feat_desc_->GetEmbedding(cpu_value_ptrs[0], emb_index);
-    LOG(INFO) << hbm_feat_desc_->GetEmbedding(cpu_value_ptrs[0], emb_index);
 
     for (int64 i = 0; i < size; i++) {
       memcpy(memcpy_buffer + i * value_len,
