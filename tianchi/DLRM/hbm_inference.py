@@ -357,7 +357,7 @@ def build_feature_columns():
     # sync_idx_count = 257
     # HitRate = 88.1704865 %, visit_count = 7147653, hit_count = 6447856
     storage_option = tf.StorageOption(storage_type=config_pb2.StorageType.SET_ASSOCIATIVE_HBM_DRAM,
-                                  storage_size=[1024 * 1024 * 500])
+                                  storage_size=[1024 * 1024 * 512])
                                   
     ev_opt = tf.EmbeddingVariableOption(storage_option=storage_option)
 
@@ -402,20 +402,18 @@ def train(sess_config,
           checkpoint_dir,
           tf_config=None,
           server=None):
+    start_time = time.perf_counter()
     model.is_training = True
     saver=tf.train.Saver()
     with tf.Session(config=sess_config) as sess:
         saver.restore(sess, checkpoint_dir)
         sess.run(data_init_op)
         sess.run(tf.tables_initializer())
-
-        sess.run(model.loss)
-        sess.run(model.loss)
-        sess.run(model.loss)
-        sess.run(model.loss)
-        sess.run(model.loss)
-        sess.run(model.loss)
-        sess.run(model.loss)
+        
+        for i in range(100):
+            sess.run(model.loss)
+    end_time = time.perf_counter()
+    print("ModelTimeCost =", end_time - start_time, "sec")
 
 
 def eval(sess_config, input_hooks, model, data_init_op, steps, checkpoint_dir):
