@@ -657,6 +657,7 @@ class SetAssociativeHbmStorage : public SingleTierStorage<K, V> {
     // Then replace the <k,v> pairs into the cache
     const int keys_per_block = (BLOCK_SIZE_ / WARP_SIZE) * task_per_warp_tile_;
     const int grid_size = ((miss_count - 1) / keys_per_block) + 1;
+    float threshold = 0.5;
 
     void* args2[] = {
       (void*)&missing_keys,
@@ -669,7 +670,8 @@ class SetAssociativeHbmStorage : public SingleTierStorage<K, V> {
       (void*)&set_mutex_,
       (void*)&global_counter_,
       (void*)&capacity_in_set_,
-      (void*)&task_per_warp_tile_};
+      (void*)&task_per_warp_tile_,
+      (void*)&threshold};
 
     cudaLaunchKernel(
       (void *)insert_replace_kernel<K, V>,
@@ -687,6 +689,7 @@ class SetAssociativeHbmStorage : public SingleTierStorage<K, V> {
     const int keys_per_block = (BLOCK_SIZE_ / WARP_SIZE) * task_per_warp_tile_;
     const int grid_size = ((size - 1) / keys_per_block) + 1;
 
+    float threshold = 1;
     void* args[] = {
       (void*)&keys,
       (void*)&memcpy_buffer_gpu,
@@ -698,7 +701,8 @@ class SetAssociativeHbmStorage : public SingleTierStorage<K, V> {
       (void*)&set_mutex_,
       (void*)&global_counter_,
       (void*)&capacity_in_set_,
-      (void*)&task_per_warp_tile_};
+      (void*)&task_per_warp_tile_,
+      (void*)&threshold};
 
     cudaLaunchKernel(
       (void *)insert_replace_kernel<K, V>,

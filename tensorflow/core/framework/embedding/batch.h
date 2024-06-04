@@ -85,7 +85,7 @@ __global__ void init_cache(slab_set<K> *, int *, int *, const int, const K, int 
 
 template<class K, class V>
 __global__ void insert_replace_kernel(const K *, const V *, const int, const int, slab_set<K> *, \
-    V *, int *, int *, int *, const int, const int);
+    V *, int *, int *, int *, const int, const int, float);
 
 template<class K, class V>
 __global__ void get_kernel(const K *, const int,V *, const int, int *, \

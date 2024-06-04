@@ -16,6 +16,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 
 #include <cooperative_groups.h>
+#include <curand_kernel.h>
 
 #include "tensorflow/core/framework/embedding/batch.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -530,7 +531,13 @@ __global__ void insert_replace_kernel(const K* d_keys, const V* d_values,
                                       int* slot_counter,
                                       int* set_mutex, int* global_counter,
                                       const int capacity_in_set,
-                                      const int task_per_warp_tile) {
+                                      const int task_per_warp_tile,
+                                      float threshold) {
+  int idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+  curandState state;
+  curand_init(1234, idx, 0, &state); // 种子、线程ID、偏移量、状态
+
   int empty_key = -1;
   // Lane(thread) ID within a warp_tile
   cg::thread_block_tile<WARP_SIZE> warp_tile =
@@ -584,6 +591,14 @@ __global__ void insert_replace_kernel(const K* d_keys, const V* d_values,
     int slot_distance;
     // Working queue before task started
     const unsigned old_active_mask = active_mask;
+
+    float randVal = curand_uniform(&state);
+/*     if(randVal > threshold) {
+        if (lane_idx == (int)next_lane) {
+          active = false;
+        }
+        active_mask = warp_tile.ballot(active);
+    } */
 
     // Lock the slabset before operating the slabset
     warp_lock_mutex(warp_tile, set_mutex[next_set]);
@@ -639,6 +654,14 @@ __global__ void insert_replace_kernel(const K* d_keys, const V* d_values,
         active_mask = warp_tile.ballot(active);
         break;
       }
+      if(randVal > threshold) {
+        if (lane_idx == (int)next_lane) {
+          //active = false;
+        }
+        
+        //active_mask = warp_tile.ballot(active);
+        break;
+      }
 
       // Compare the slab data with empty key.
       // If found empty key, do insertion,the task is complete
@@ -683,7 +706,7 @@ __global__ void insert_replace_kernel(const K* d_keys, const V* d_values,
 
 #define REGISTER_KERNELS_ALL_INDEX(T1, T2) \
    template __global__ void insert_replace_kernel<T1, T2>(const T1 *, const T2 *, const int, const int, \
-     slab_set<T1> *,  T2 *,  int *,  int *, int *, const int, const int);
+     slab_set<T1> *,  T2 *,  int *,  int *, int *, const int, const int, float);
 
 #define REGISTER_KERNELS_ALL_TYPES(T2) \
    REGISTER_KERNELS_ALL_INDEX(int32, T2) \
