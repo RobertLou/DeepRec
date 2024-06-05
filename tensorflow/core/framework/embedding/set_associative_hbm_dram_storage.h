@@ -64,7 +64,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
         Storage<K, V>::storage_config_.size[0]
         / (total_dim() * sizeof(V));
     dram_feat_desc_->InitSlotInfo(hbm_feat_desc_);
-    hbm_->Init(gpu_alloc_, MultiTierStorage<K, V>::cache_capacity_, total_dim());
+    //hbm_->Init(gpu_alloc_, MultiTierStorage<K, V>::cache_capacity_, total_dim());
   }
 
   Status Get(K key, void** value_ptr) override {
@@ -357,6 +357,7 @@ class SetAssociativeHbmDramStorage : public MultiTierStorage<K, V> {
     int64 num_of_hbm_ids =
       std::min(MultiTierStorage<K, V>::cache_capacity_,
       (int64)restore_cache_->size());
+    hbm_->Init(gpu_alloc_, num_of_hbm_ids, total_dim());
 
     if (num_of_hbm_ids > 0) {
       K* hbm_ids = new K[num_of_hbm_ids];
